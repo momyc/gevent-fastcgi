@@ -1,12 +1,14 @@
 from setuptools import setup, find_packages
-import sys, os
-from gevent_fastcgi import __version__, __doc__
+import re
+
+__version__ = re.match(r'\s*__version__\s*=\s*\'(.*)\'', file('gevent_fastcgi.py').read()).group(1)
 
 setup(name='gevent-fastcgi',
       version=__version__,
       description="FastCGI/WSGI server implementation based on gevent library",
-      long_description=__doc__,
-      keywords='fastcgi gevent',
+      long_description='''FastCGI/WSGI server implemented using gevent library.
+      Supports connection multiplexing. Compatibe with PasteDeploy.''',
+      keywords='fastcgi gevent wsgi',
       author='Alexander Kulakov',
       author_email='a.kulakov@mail.ru',
       url='http://github.com/momyc/gevent-fastcgi',
