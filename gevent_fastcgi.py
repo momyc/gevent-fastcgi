@@ -1,7 +1,26 @@
-# Copyright (c) 2011 Alexander Kulakov <a.kulakov@mail.ru>
+# Copyright (c) 2011-2012, Alexander Kulakov
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+#    The above copyright notice and this permission notice shall be included in
+#    all copies or substantial portions of the Software.
+#
+#    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#    THE SOFTWARE.
 
 """
-gevent-fastcgi is an FastCGI/WSGI server implemented with using gevent Python networking library
+FastCGI/WSGI server implemented using gevent library.
+Supports connection multiplexing. Contains paste.server_runner entry point.
 """
 
 import os
@@ -436,24 +455,19 @@ class ClientConnection(_Connection):
 
 
 class WSGIServer(StreamServer):
-    """
-    FastCGI server.
-    max_conns and max_reqs do not limit anything locally and will only be used
-    in reply to FCGI_GET_VALUES request from Web-server.
 
-    Extra keyword arguments will be passed to StreamServer so spawning policy and
-    other aspects of it can be controlled.
-    """
-
-    def __init__(self, bind_address, app, max_conns=1024, max_reqs_per_conn=1024, **kwargs):
-        super(WSGIServer, self).__init__(bind_address, self.handle_connection, **kwargs)
+    def __init__(self, bind_address, app, max_conns=1024, max_reqs=1024 * 1024, **kwargs):
+        """
+        Up to max_conns Greenlets will be spawned to handle connections
+        """
+        super(WSGIServer, self).__init__(bind_address, self.handle_connection, spawn=max_conns, **kwargs)
         self.app = app
         self.max_conns = max_conns
-        self.max_reqs_per_conn = max_reqs_per_conn
+        self.max_reqs = max_reqs
 
     def handle_connection(self, sock, addr):
         logging.debug('New connection from %s', addr)
-        conn = ServerConnection(sock, self.handle_request, self.max_conns, self.max_conns * self.max_reqs_per_conn, True)
+        conn = ServerConnection(sock, self.handle_request, self.max_conns, self.max_reqs, True)
         conn.run()
 
     def handle_request(self, req):
