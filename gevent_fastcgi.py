@@ -16,7 +16,6 @@ from gevent.server import StreamServer
 from gevent.event import Event
 from gevent.queue import Queue
 from gevent.greenlet import LinkedExited
-from gevent.monkey import patch_thread; patch_thread()
 
 try:
     from cStringIO import StringIO
@@ -469,5 +468,8 @@ class WSGIServer(StreamServer):
 
 def run_server(app, conf, host='127.0.0.1', port=5000, path=None, **kwargs):
     addr = path or (host, int(port))
+    if kwargs.pop('patch_thread', True):
+        from gevent.monkey import patch_thread
+        patch_thread()
     WSGIServer(addr, app, **kwargs).serve_forever()
 
