@@ -1,1 +1,1 @@
-gevent-fastcgi is an FastCGI/WSGI server implemented with using gevent Python networking library
+gevent-fastcgi is an FastCGI/WSGI server implementation using gevent library
