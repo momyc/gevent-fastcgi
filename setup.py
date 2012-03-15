@@ -12,13 +12,13 @@ setup(name='gevent-fastcgi',
       url='http://github.com/momyc/gevent-fastcgi',
       py_modules=['gevent_fastcgi'],
       zip_safe=True,
+      license='MIT',
       install_requires=[
           "gevent>=0.13.6"
       ],
       entry_points="""
       [paste.server_runner]
       fastcgi=gevent_fastcgi:run_server
-      # -*- Entry points: -*-
       """,
       test_suite="tests",
       )
