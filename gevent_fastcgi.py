@@ -41,7 +41,8 @@ try:
 except ImportError:
     from StringIO import StringIO
 
-__version__ = '0.1dev'
+
+__version__ = '0.1.1dev'
 
 __all__ = [
     'run_server',
@@ -80,6 +81,8 @@ FCGI_CANT_MPX_CONN = 1
 FCGI_OVERLOADED = 2
 FCGI_UNKNOWN_ROLE = 3
 
+__all__.extend(name for name in locals().keys() if name.startswith('FCGI_'))
+
 FCGI_RECORD_TYPES = {
     FCGI_BEGIN_REQUEST: 'FCGI_BEGIN_REQUEST',
     FCGI_ABORT_REQUEST: 'FCGI_ABORT_REQUEST',
@@ -95,16 +98,14 @@ FCGI_RECORD_TYPES = {
 
 FCGI_ROLES = {FCGI_RESPONDER: 'RESPONDER', FCGI_AUTHORIZER: 'AUTHORIZER', FCGI_FILTER: 'FILTER'}
 
-__all__.extend(name for name in locals().keys() if name.startswith('FCGI_'))
+EXISTING_REQUEST_REC_TYPES = frozenset((FCGI_STDIN, FCGI_PARAMS, FCGI_ABORT_REQUEST))
 
 HEADER_STRUCT = '!BBHHBx'
 BEGIN_REQUEST_STRUCT = '!HB5x'
 END_REQUEST_STRUCT = '!LB3x'
 UNKNOWN_TYPE_STRUCT = '!B7x'
 
-EXISTING_REQUEST_REC_TYPES = frozenset((FCGI_STDIN, FCGI_PARAMS, FCGI_ABORT_REQUEST))
-KNOWN_ROLES = frozenset((FCGI_RESPONDER, FCGI_AUTHORIZER, FCGI_FILTER))
-
+logger = logging.getLogger(__file__)
 
 def pack_pairs(pairs):
     def _len(s):
@@ -175,11 +176,11 @@ class InputStream(object):
             self.file = tmp_file
             self.file.seek(pos)
             self.landed = True
-            logging.debug('Stream landed at %s', self.len)
+            logger.debug('Stream landed at %s', self.len)
 
     def feed(self, data):
         if not data: # EOF mark
-            logging.debug('InputStream EOF mark received %r', data)
+            logger.debug('InputStream EOF mark received %r', data)
             self.file.seek(0)
             self.complete.set()
             return
@@ -194,7 +195,7 @@ class InputStream(object):
     def __getattr__(self, attr):
         # Block until all data is received
         if attr in self._block:
-            logging.debug('Waiting for InputStream to be received in full')
+            logger.debug('Waiting for InputStream to be received in full')
             self.complete.wait()
             self._flip_attrs()
             return self.__dict__[attr]
@@ -218,7 +219,7 @@ class OutputStream(object):
 
     def write(self, data):
         if self.closed:
-            logging.warn('Write to closed %s', self)
+            logger.warn('Write to closed %s', self)
             return
         if self.rec_type == FCGI_STDERR:
             sys.stderr.write(data)
@@ -281,7 +282,7 @@ class _Connection(object):
         try:
             header = self.read_bytes(FCGI_RECORD_HEADER_LEN)
             if not header:
-                logging.debug('Peer closed connection')
+                logger.debug('Peer closed connection')
                 return None, None, None
             ver, rec_type, req_id, clen, plen = unpack(HEADER_STRUCT, header)
             if ver != FCGI_VERSION:
@@ -299,7 +300,7 @@ class _Connection(object):
             self.close()
             raise
 
-        logging.debug('Received %s bytes as %s record type for request %s',
+        logger.debug('Received %s bytes as %s record type for request %s',
                 len(content), FCGI_RECORD_TYPES.get(rec_type, 'Unknown %s' % rec_type), req_id)
         return rec_type, req_id, content
 
@@ -307,7 +308,7 @@ class _Connection(object):
         if self.sock:
             self.sock.close()
             self.sock = None
-            logging.debug('Connection closed')
+            logger.debug('Connection closed')
 
 
 class ServerConnection(_Connection):
@@ -353,19 +354,19 @@ class ServerConnection(_Connection):
                     if content:
                         req.params.update(unpack_pairs(content))
                     else:
-                        logging.debug('Starting handler for request %s: %r', req_id, req.params)
+                        logger.debug('Starting handler for request %s: %r', req_id, req.params)
                         req.greenlet = spawn(self.handle_request, req)
                 elif rec_type == FCGI_ABORT_REQUEST:
-                    logging.debug('Abort record received for %s', req_id)
+                    logger.debug('Abort record received for %s', req_id)
                     req.complete = True
             elif rec_type == FCGI_BEGIN_REQUEST:
                 role, flags = unpack(BEGIN_REQUEST_STRUCT, content)
-                if role in KNOWN_ROLES:
+                if role in FCGI_ROLES:
                     requests[req_id] = Request(self, role, req_id, flags)
-                    logging.debug('New %s request %s with flags %04x', FCGI_ROLES[role], req_id, flags)
+                    logger.debug('New %s request %s with flags %04x', FCGI_ROLES[role], req_id, flags)
                 else:
                     self.output(FCGI_END_REQUEST, pack(END_REQUEST_STRUCT, 0,  FCGI_UNKNOWN_ROLE), req_id)
-                    logging.error('Unknown request %s role %s', req_id, FCGI_ROLES[role])
+                    logger.error('Unknown request role %s', role)
             elif rec_type == FCGI_GET_VALUES:
                 self.output(FCGI_GET_VALUES_RESULT, ''.join(pack_pairs([
                     ('FCGI_MAX_CONNS', self.max_conns),
@@ -374,23 +375,23 @@ class ServerConnection(_Connection):
                     ])))
                 self.output(FCGI_GET_VALUES_RESULT)
             else:
-                logging.error('Unknown record type %s received', rec_type)
+                logger.error('Unknown record type %s received', rec_type)
                 self.output(FCGI_UNKNOWN_TYPE, pack('!B7x', rec_type))
 
-        logging.debug('Finishing connection handler')
+        logger.debug('Finishing connection handler')
         self.close()
         
     def handle_request(self, req):
         try:
             self.handler(req)
         except:
-            logging.exception('Request %s handler failed', req.id)
+            logger.exception('Request %s handler failed', req.id)
         req.stdout.close()
         req.stderr.close()
         self.output(FCGI_END_REQUEST, pack(END_REQUEST_STRUCT, 0, FCGI_REQUEST_COMPLETE), req.id)
         self.requests.pop(req.id)
         if not self.requests and not req.keep_conn:
-            logging.debug('Last handler finished')
+            logger.debug('Last handler finished')
             self.output(None)
 
     def output(self, rec_type, content='', req_id=FCGI_NULL_REQUEST_ID):
@@ -404,10 +405,10 @@ class ServerConnection(_Connection):
         while requests or not exit_requested:
             rec_type, content, req_id = queue.get()
             if rec_type is None:
-                logging.debug('Request handler wants to close connection')
+                logger.debug('Request handler wants to close connection')
                 exit_requested = True
                 continue
-            logging.debug('Sending %s %s %s', FCGI_RECORD_TYPES[rec_type], len(content), req_id)
+            logger.debug('Sending %s %s %s', FCGI_RECORD_TYPES[rec_type], len(content), req_id)
             length = len(content)
             if length <= 0xFFFF:
                 write_record(rec_type, content, req_id)
@@ -417,7 +418,7 @@ class ServerConnection(_Connection):
                 while offset < length:
                     write_record(rec_type, data[offset:offset+0xFFFF], req_id)
                     offset += 0xFFFF
-        logging.debug('Output handler finished')
+        logger.debug('Output handler finished')
 
 
 class ClientConnection(_Connection):
@@ -466,7 +467,7 @@ class WSGIServer(StreamServer):
         self.max_reqs = max_reqs
 
     def handle_connection(self, sock, addr):
-        logging.debug('New connection from %s', addr)
+        logger.debug('New connection from %s', addr)
         conn = ServerConnection(sock, self.handle_request, self.max_conns, self.max_reqs, True)
         conn.run()
 
@@ -477,7 +478,7 @@ class WSGIServer(StreamServer):
         try:
             BaseCGIHandler(req.stdin, req.stdout, req.stderr, req.params).run(self.app)
         except:
-            logging.exception('Failed to handle request %s', req.id)
+            logger.exception('Failed to handle request %s', req.id)
 
 
 def run_server(app, conf, host='127.0.0.1', port=5000, path=None, **kwargs):
