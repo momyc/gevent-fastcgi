@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 import re
 
-__version__ = re.match(r'\s*__version__\s*=\s*\'(.*)\'', file('gevent_fastcgi.py').read()).group(1)
+__version__ = re.search(r'__version__\s*=\s*\'(.*)\'', file('gevent_fastcgi.py').read()).group(1)
 
 setup(name='gevent-fastcgi',
       version=__version__,
