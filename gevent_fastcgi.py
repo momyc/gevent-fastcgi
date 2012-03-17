@@ -461,6 +461,11 @@ class WSGIServer(StreamServer):
         """
         Up to max_conns Greenlets will be spawned to handle connections
         """
+        if isinstance(bind_address, basestring):
+            sock = socket.socket(socket.AF_UNIX)
+            sock.bind(bind_address)
+            bind_address = sock
+
         super(WSGIServer, self).__init__(bind_address, self.handle_connection, spawn=max_conns, **kwargs)
         self.app = app
         self.max_conns = max_conns
