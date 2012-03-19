@@ -15,9 +15,12 @@ from gevent_fastcgi import WSGIServer
 from myapp import app
 
 server = WSGIServer(('127.0.0.1', 4000), app, max_conns=1024)
+# Use UNIX-socket instead of TCP
+# server = WSGIServer('/path/to/socket', app, max_conns=1024, max_reqs=1024 * 1024)
+
 server.serve_forever()
 ```
-It also can be used as server for paster ini-scripts as following:
+It can also be used as server for paster ini-scripts as following:
 
 ```
 ...
@@ -25,6 +28,7 @@ It also can be used as server for paster ini-scripts as following:
 use = egg:gevent_fastcgi#fastcgi
 host = 127.0.0.1
 port = 4000
+# path = /path/to/socket
 max_conns = 1024
 ...
 ```
