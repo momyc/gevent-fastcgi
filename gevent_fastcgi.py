@@ -42,7 +42,7 @@ except ImportError:
     from StringIO import StringIO
 
 
-__version__ = '0.1.1dev'
+__version__ = '0.1.3dev'
 
 __all__ = [
     'run_server',
@@ -428,7 +428,14 @@ class ClientConnection(_Connection):
     """
 
     def __init__(self, addr, timeout=None):
-        sock = socket.create_connection(addr, timeout)
+        if isinstance(addr, basestring):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        elif isinstance(addr, tuple):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        else:
+            raise ValueError('Address must be a tuple or a string not %s', type(addr))
+
+        sock.connect(addr)
         super(ClientConnection, self).__init__(sock)
 
     def send_begin_request(self, req_id, role=FCGI_RESPONDER, flags=0):
@@ -462,8 +469,9 @@ class WSGIServer(StreamServer):
         Up to max_conns Greenlets will be spawned to handle connections
         """
         if isinstance(bind_address, basestring):
-            sock = socket.socket(socket.AF_UNIX)
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.bind(bind_address)
+            sock.listen(max_conns)
             bind_address = sock
 
         super(WSGIServer, self).__init__(bind_address, self.handle_connection, spawn=max_conns, **kwargs)
