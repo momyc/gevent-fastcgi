@@ -127,7 +127,7 @@ def unpack_pairs(stream):
             b += stream.read(3)
             if len(b) != 4:
                 raise ProtocolError('Failed to read name length')
-            l = unpack('!L', b) & 0x7FFFFFFF
+            l = unpack('!L', b)[0] & 0x7FFFFFFF
         return l
 
     def read_str(l):
