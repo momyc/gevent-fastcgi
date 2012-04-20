@@ -1,1 +1,2 @@
-gevent-fastcgi is an FastCGI/WSGI server implementation using gevent library
+gevent-fastcgi is an FastCGI/WSGI server implementation using gevent library.
+Contains Django application to turn any Django project to gevent/coroutine haven

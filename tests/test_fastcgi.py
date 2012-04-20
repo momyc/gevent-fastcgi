@@ -29,7 +29,8 @@ import gevent
 from gevent_fastcgi import *
 from struct import pack, unpack
 
-ADDR = ('127.0.0.1', 6000)
+#ADDR = ('127.0.0.1', 6000)
+ADDR = '/tmp/gevent-fastcgi.sock'
 TEST_DATA = 'abc' * 4096
 
 import logging
@@ -49,42 +50,50 @@ class TestFastCGI(unittest.TestCase):
         self.server.start()
 
     def tearDown(self):
-        self.server.stop()
+        self.server.stop(20)
+        if isinstance(ADDR, basestring):
+            import os
+            os.unlink(ADDR)
 
     def test_1_values(self):
         conn = ClientConnection(ADDR)
         conn.send_get_values()
-        resp_type, req_id, content = conn.read_record()
-        self.assertEqual(resp_type, FCGI_GET_VALUES_RESULT)
-        self.assertEqual(req_id, FCGI_NULL_REQUEST_ID)
-        values = dict(unpack_pairs(content))
+        while 1:
+            record = conn.read_record()
+            self.assertEqual(record.type, FCGI_GET_VALUES_RESULT)
+            self.assertEqual(record.request_id, FCGI_NULL_REQUEST_ID)
+            if record.content:
+                values = dict(unpack_pairs(record.content))
+            else:
+                break
+        conn.close()
 
     def test_2_responder(self):
         name = 'World'
         conn = ClientConnection(ADDR)
-        req_id = 123
-        conn.send_begin_request(req_id=req_id)
+        request_id = 123
+        conn.send_begin_request(request_id=request_id)
         conn.send_params([
             ('SCRIPT_NAME', '/'),
             ('PATH_INFO', '/%s' % name),
             ('REQUEST_METHOD', 'POST'),
             ('CONTENT_TYPE', 'application/octet-stream'),
             ('CONTENT_LENGTH', str(len(TEST_DATA))),
-            ], req_id=req_id)
-        conn.send_params(req_id=req_id)
-        conn.send_stdin(TEST_DATA, req_id=req_id)
-        conn.send_stdin(req_id=req_id)
+            ], request_id=request_id)
+        conn.send_params(request_id=request_id)
+        conn.send_stdin(TEST_DATA, request_id=request_id)
+        conn.send_stdin(request_id=request_id)
         while True:
-            rec_type, resp_id, content = conn.read_record()
-            self.assertEqual(req_id, resp_id)
-            self.assertIn(rec_type, (FCGI_STDOUT, FCGI_STDERR, FCGI_END_REQUEST))
-            if rec_type == FCGI_STDERR:
-                self.assertEqual(content, '')
-            elif rec_type == FCGI_STDOUT:
+            record = conn.read_record()
+            self.assertEqual(record.request_id, request_id)
+            self.assertIn(record.type, (FCGI_STDOUT, FCGI_STDERR, FCGI_END_REQUEST))
+            if record.type == FCGI_STDERR:
+                self.assertEqual(record.content, '')
+            elif record.type == FCGI_STDOUT:
                 pass
-            elif rec_type == FCGI_END_REQUEST:
-                app_status, req_status = conn.unpack_end_request(content)
+            elif record.type == FCGI_END_REQUEST:
+                app_status, req_status = conn.unpack_end_request(record.content)
                 self.assertEqual(app_status, 0)
                 self.assertEqual(req_status, FCGI_REQUEST_COMPLETE)
                 break
-
+        conn.close()

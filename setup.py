@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
 import re
 
 __version__ = re.search(r'__version__\s*=\s*\'(.*)\'', file('gevent_fastcgi.py').read()).group(1)
@@ -23,4 +23,5 @@ setup(name='gevent-fastcgi',
       fastcgi=gevent_fastcgi:run_server
       """,
       test_suite="tests",
+      ext_modules=[Extension('_speedups', sources=['_speedups.c'])],
       )

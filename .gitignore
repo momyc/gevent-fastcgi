@@ -1,4 +1,5 @@
 *.py[co]
+*.so
 build
 dist
 gevent_fastcgi.egg-info
