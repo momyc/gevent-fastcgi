@@ -36,13 +36,15 @@ from gevent.event import Event
 from gevent.queue import Queue
 from gevent.greenlet import LinkedExited
 
+from _speedups import unpack_pairs
+
 try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
 
 
-__version__ = '0.1.3dev'
+__version__ = '0.1.4dev'
 
 __all__ = [
     'run_server',
@@ -116,41 +118,57 @@ def pack_pairs(pairs):
         pairs = pairs.iteritems()
     return (_len(name) + _len(value) + name + value for name, value in pairs)
 
-def unpack_pairs(stream):
+try:
+    from _speedups import unpack_pairs
+except ImportError:
+    def unpack_pairs(stream):
 
-    def read_len():
-        b = stream.read(1)
-        if not b:
-            return None
-        l = ord(b)
-        if l & 128:
-            b += stream.read(3)
-            if len(b) != 4:
-                raise ProtocolError('Failed to read name length')
-            l = unpack('!L', b) & 0x7FFFFFFF
-        return l
+        def read_len():
+            b = stream.read(1)
+            if not b:
+                return None
+            l = ord(b)
+            if l & 128:
+                b += stream.read(3)
+                if len(b) != 4:
+                    raise ProtocolError('Failed to read name length')
+                l = unpack('!L', b) & 0x7FFFFFFF
+            return l
 
-    def read_str(l):
-        s = stream.read(l)
-        if len(s) != l:
-            raise ProtocolError('Failed to read %s bytes')
-        return s
+        def read_str(l):
+            s = stream.read(l)
+            if len(s) != l:
+                raise ProtocolError('Failed to read %s bytes')
+            return s
 
-    if isinstance(stream, basestring):
-        stream = StringIO(stream)
+        if isinstance(stream, basestring):
+            stream = StringIO(stream)
 
-    while True:
-        name_len = read_len()
-        if name_len is None:
-            return
-        value_len = read_len()
-        if value_len is None:
-            raise ProtocolError('Failed to read value length')
-        yield read_str(name_len), read_str(value_len)
+        while True:
+            name_len = read_len()
+            if name_len is None:
+                return
+            value_len = read_len()
+            if value_len is None:
+                raise ProtocolError('Failed to read value length')
+            yield read_str(name_len), read_str(value_len)
 
 
 class ProtocolError(Exception):
     pass
+
+
+class Record(object):
+
+    __slots__ = ('type', 'content', 'request_id')
+
+    def __init__(self, record_type, content='', request_id=FCGI_NULL_REQUEST_ID):
+        self.type = record_type
+        self.content = content
+        self.request_id = request_id
+
+    def __str__(self):
+        return 'Record(%s, %s, %s)' % (FCGI_RECORD_TYPES.get(self.type, self.type), self.request_id, len(self.content))
 
 
 class InputStream(object):
@@ -206,35 +224,38 @@ class InputStream(object):
             if hasattr(self.file, attr):
                 setattr(self, attr, getattr(self.file, attr))
 
+    def __str__(self):
+        return 'InputStream(%s)' % self.request_id
+
 
 class OutputStream(object):
     """
     FCGI_STDOUT or FCGI_STDERR stream.
     """
-    def __init__(self, conn, req_id, rec_type):
+    def __init__(self, conn, request_id, record_type):
         self.conn = conn
-        self.req_id = req_id
-        self.rec_type = rec_type
+        self.request_id = request_id
+        self.record_type = record_type
         self.closed = False
 
     def write(self, data):
         if self.closed:
             logger.warn('Write to closed %s', self)
             return
-        if self.rec_type == FCGI_STDERR:
+        if self.record_type == FCGI_STDERR:
             sys.stderr.write(data)
-        self.conn.output(self.rec_type, data, self.req_id)
+        self.conn.output(self.record_type, data, self.request_id)
 
     def flush(self):
         pass
 
     def close(self):
         if not self.closed:
-            self.conn.output(self.rec_type, '', self.req_id)
+            self.conn.output(self.record_type, '', self.request_id)
             self.closed = True
 
     def __str__(self):
-        return '%s-%s' % (FCGI_RECORD_TYPES[self.rec_type], self.req_id)
+        return 'OutputStream(%s, %s)' % (FCGI_RECORD_TYPES[self.record_type], self.request_id)
 
 
 class Request(object):
@@ -262,11 +283,12 @@ class _Connection(object):
     def __init__(self, sock, *args, **kwargs):
         self.sock = sock
 
-    def write_record(self, rec_type, content='', req_id=FCGI_NULL_REQUEST_ID):
-        clen = len(content)
-        plen = -clen & 7
-        header = pack(HEADER_STRUCT, FCGI_VERSION, rec_type, req_id, clen, plen)
-        map(self.sock.sendall, (header, content, '\x00' * plen))
+    def write_record(self, record):
+        logger.debug('Writing %s', record)
+        content_len = len(record.content)
+        padding = -content_len & 7
+        header = pack(HEADER_STRUCT, FCGI_VERSION, record.type, record.request_id, content_len, padding)
+        self.sock.sendall(''.join((header, record.content, '\x00' * padding)))
 
     def read_bytes(self, num):
         chunks = []
@@ -283,26 +305,21 @@ class _Connection(object):
             header = self.read_bytes(FCGI_RECORD_HEADER_LEN)
             if not header:
                 logger.debug('Peer closed connection')
-                return None, None, None
-            ver, rec_type, req_id, clen, plen = unpack(HEADER_STRUCT, header)
-            if ver != FCGI_VERSION:
-                raise ProtocolError('Unsopported FastCGI version %s', ver)
-            content = self.read_bytes(clen)
-            if plen:
-                self.read_bytes(plen)
+                return None
+            version, record_type, request_id, content_len, padding = unpack(HEADER_STRUCT, header)
+            if version != FCGI_VERSION:
+                raise ProtocolError('Unsopported FastCGI version %s', version)
+            content = self.read_bytes(content_len)
+            if padding:
+                self.read_bytes(padding)
+            
+            record = Record(record_type, content, request_id)
+            logger.debug('Received %s', record)
+            return record
         except socket.error, ex:
-            if ex.errno == 104:
-                self.close()
-                return None, None, None
-            else:
-                raise
-        except:
+            logger.exception('Failed to read record from peer')
             self.close()
-            raise
-
-        logger.debug('Received %s bytes as %s record type for request %s',
-                len(content), FCGI_RECORD_TYPES.get(rec_type, 'Unknown %s' % rec_type), req_id)
-        return rec_type, req_id, content
+            return None
 
     def close(self):
         if self.sock:
@@ -324,50 +341,48 @@ class ServerConnection(_Connection):
         self.max_reqs = str(max_reqs)
         self.mpxs_conns = str(int(bool(mpxs_conns)))
         self.output_queue = Queue()
-        # self.output_handler = spawn_link(self.handle_output)
-        self.output_handler = spawn(self.handle_output)
-        self.output_handler.link() # raise LinkedException in connection Greenlet to terminate it
 
     def run(self):
         self.requests = requests = {}
+        output_handler = spawn(self.handle_output)
+
         while True:
-            try:
-                rec_type, req_id, content = self.read_record()
-            except LinkedExited:
-                # output handler exited
-                break
-            if rec_type is None:
-                # connection was closed by peer
+            record = self.read_record()
+            if record is None:
+                self.output(None) # ask output handler to exit once all is sent out
                 break
 
-            if rec_type in EXISTING_REQUEST_REC_TYPES:
-                req = requests.get(req_id)
-                if not req:
-                    raise ProtocolError('%s record for non-existing request %s' % (FCGI_RECORD_TYPES[rec_type], req_id))
-                if rec_type == FCGI_STDIN:
-                    req.stdin.feed(content)
-                elif rec_type == FCGI_DATA:
-                    req.data.feed(content)
-                elif rec_type == FCGI_PARAMS:
-                    if req.greenlet:
-                        raise ProtocolError('Unexpected FCGI_PARAMS for request %s' % req_id)
-                    if content:
-                        req.params.update(unpack_pairs(content))
+            if record.type in EXISTING_REQUEST_REC_TYPES:
+                request = requests.get(record.request_id)
+                if not request:
+                    raise ProtocolError('%s for non-existing request' % record)
+                if record.type == FCGI_STDIN:
+                    request.stdin.feed(record.content)
+                elif record.type == FCGI_DATA:
+                    request.data.feed(record.content)
+                elif record.type == FCGI_PARAMS:
+                    if request.greenlet:
+                        raise ProtocolError('Unexpected FCGI_PARAMS for request %s' % request.id)
+                    if record.content:
+                        request.params.update(unpack_pairs(record.content))
                     else:
-                        logger.debug('Starting handler for request %s: %r', req_id, req.params)
-                        req.greenlet = spawn(self.handle_request, req)
-                elif rec_type == FCGI_ABORT_REQUEST:
-                    logger.debug('Abort record received for %s', req_id)
-                    req.complete = True
-            elif rec_type == FCGI_BEGIN_REQUEST:
-                role, flags = unpack(BEGIN_REQUEST_STRUCT, content)
+                        logger.debug('Starting handler for request %s: %r', request.id, request.params)
+                        request.greenlet = spawn(self.handle_request, request)
+                elif record.type == FCGI_ABORT_REQUEST:
+                    if request.greenlet:
+                        request.greenlet.kill()
+                        request.greenlet = None
+                    request.complete = True
+                    logger.debug('Aborted request %s', record.rerequest_id)
+            elif record.type == FCGI_BEGIN_REQUEST:
+                role, flags = unpack(BEGIN_REQUEST_STRUCT, record.content)
                 if role in FCGI_ROLES:
-                    requests[req_id] = Request(self, role, req_id, flags)
-                    logger.debug('New %s request %s with flags %04x', FCGI_ROLES[role], req_id, flags)
+                    requests[record.request_id] = Request(self, role, record.request_id, flags)
+                    logger.debug('New %s request %s with flags %04x', FCGI_ROLES[role], record.request_id, flags)
                 else:
-                    self.output(FCGI_END_REQUEST, pack(END_REQUEST_STRUCT, 0,  FCGI_UNKNOWN_ROLE), req_id)
+                    self.output(FCGI_END_REQUEST, pack(END_REQUEST_STRUCT, 0,  FCGI_UNKNOWN_ROLE), record.request_id)
                     logger.error('Unknown request role %s', role)
-            elif rec_type == FCGI_GET_VALUES:
+            elif record.type == FCGI_GET_VALUES:
                 self.output(FCGI_GET_VALUES_RESULT, ''.join(pack_pairs([
                     ('FCGI_MAX_CONNS', self.max_conns),
                     ('FCGI_MAX_REQS', self.max_reqs),
@@ -375,9 +390,10 @@ class ServerConnection(_Connection):
                     ])))
                 self.output(FCGI_GET_VALUES_RESULT)
             else:
-                logger.error('Unknown record type %s received', rec_type)
-                self.output(FCGI_UNKNOWN_TYPE, pack('!B7x', rec_type))
+                logger.error('%s: Unknown record type' % record)
+                self.output(FCGI_UNKNOWN_TYPE, pack('!B7x', record.type))
 
+        output_handler.join()
         logger.debug('Finishing connection handler')
         self.close()
         
@@ -394,29 +410,33 @@ class ServerConnection(_Connection):
             logger.debug('Last handler finished')
             self.output(None)
 
-    def output(self, rec_type, content='', req_id=FCGI_NULL_REQUEST_ID):
-        self.output_queue.put((rec_type, content, req_id))
+    def output(self, record_type, content='', request_id=FCGI_NULL_REQUEST_ID):
+        if record_type is None:
+            self.output_queue.put(None)
+        else:
+            self.output_queue.put(Record(record_type, content, request_id))
 
     def handle_output(self):
         exit_requested = False
         requests = self.requests
         queue = self.output_queue
         write_record = self.write_record
+
         while requests or not exit_requested:
-            rec_type, content, req_id = queue.get()
-            if rec_type is None:
+            record = queue.get()
+            if record is None:
                 logger.debug('Request handler wants to close connection')
                 exit_requested = True
                 continue
-            logger.debug('Sending %s %s %s', FCGI_RECORD_TYPES[rec_type], len(content), req_id)
-            length = len(content)
+            logger.debug('Sending %s', record)
+            length = len(record.content)
             if length <= 0xFFFF:
-                write_record(rec_type, content, req_id)
+                write_record(record)
             else:
                 offset = 0
-                data = memoryview(content)
+                data = memoryview(record.content)
                 while offset < length:
-                    write_record(rec_type, data[offset:offset+0xFFFF], req_id)
+                    write_record(Record(record.type, data[offset:offset+0xFFFF], record.request_id))
                     offset += 0xFFFF
         logger.debug('Output handler finished')
 
@@ -438,25 +458,25 @@ class ClientConnection(_Connection):
         sock.connect(addr)
         super(ClientConnection, self).__init__(sock)
 
-    def send_begin_request(self, req_id, role=FCGI_RESPONDER, flags=0):
-        self.write_record(FCGI_BEGIN_REQUEST, pack(BEGIN_REQUEST_STRUCT, FCGI_RESPONDER, flags), req_id)
+    def send_begin_request(self, request_id, role=FCGI_RESPONDER, flags=0):
+        self.write_record(Record(FCGI_BEGIN_REQUEST, pack(BEGIN_REQUEST_STRUCT, FCGI_RESPONDER, flags), request_id))
 
-    def send_abort_request(self, req_id):
-        self.write_record(FCGI_ABORT_REQUEST, req_id=req_id)
+    def send_abort_request(self, request_id):
+        self.write_record(Record(FCGI_ABORT_REQUEST, request_id=request_id))
 
-    def send_params(self, params='', req_id=1):
+    def send_params(self, params='', request_id=1):
         if params:
             params = ''.join(pack_pairs(params))
-        self.write_record(FCGI_PARAMS, params, req_id)
+        self.write_record(Record(FCGI_PARAMS, params, request_id))
 
-    def send_stdin(self, content='', req_id=1):
-        self.write_record(FCGI_STDIN, content, req_id)
+    def send_stdin(self, content='', request_id=1):
+        self.write_record(Record(FCGI_STDIN, content, request_id))
 
-    def send_data(self, content='', req_id=1):
-        self.write_record(FCGI_DATA, content, req_id)
+    def send_data(self, content='', request_id=1):
+        self.write_record(Record(FCGI_DATA, content, request_id))
 
     def send_get_values(self):
-        self.write_record(FCGI_GET_VALUES)
+        self.write_record(Record(FCGI_GET_VALUES))
 
     def unpack_end_request(self, data):
         return unpack(END_REQUEST_STRUCT, data)
