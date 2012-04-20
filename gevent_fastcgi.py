@@ -36,7 +36,6 @@ from gevent.event import Event
 from gevent.queue import Queue
 from gevent.greenlet import LinkedExited
 
-from _speedups import unpack_pairs
 
 try:
     from cStringIO import StringIO
@@ -118,9 +117,11 @@ def pack_pairs(pairs):
         pairs = pairs.iteritems()
     return (_len(name) + _len(value) + name + value for name, value in pairs)
 
+
 try:
     from _speedups import unpack_pairs
 except ImportError:
+
     def unpack_pairs(stream):
 
         def read_len():
@@ -132,7 +133,7 @@ except ImportError:
                 b += stream.read(3)
                 if len(b) != 4:
                     raise ProtocolError('Failed to read name length')
-                l = unpack('!L', b) & 0x7FFFFFFF
+                l = unpack('!L', b)[0] & 0x7FFFFFFF
             return l
 
         def read_str(l):
