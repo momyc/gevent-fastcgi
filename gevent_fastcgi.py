@@ -225,9 +225,6 @@ class InputStream(object):
             if hasattr(self.file, attr):
                 setattr(self, attr, getattr(self.file, attr))
 
-    def __str__(self):
-        return 'InputStream(%s)' % self.request_id
-
 
 class OutputStream(object):
     """
