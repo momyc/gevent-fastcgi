@@ -43,6 +43,14 @@ except ImportError:
     from StringIO import StringIO
 
 
+try:
+    memoryview
+except NameError:
+    # pre-2.7
+    def memoryview(data):
+        return data
+
+
 __version__ = '0.1.4dev'
 
 __all__ = [
@@ -347,7 +355,10 @@ class ServerConnection(_Connection):
         while True:
             record = self.read_record()
             if record is None:
-                self.output(None) # ask output handler to exit once all is sent out
+                # connection can be closed by either remote peer or by output_handler
+                if not output_handler.ready():
+                    self.output(None) # ask output handler to exit once all is sent out
+                    output_handler.join()
                 break
 
             if record.type in EXISTING_REQUEST_REC_TYPES:
@@ -391,9 +402,7 @@ class ServerConnection(_Connection):
                 logger.error('%s: Unknown record type' % record)
                 self.output(FCGI_UNKNOWN_TYPE, pack('!B7x', record.type))
 
-        output_handler.join()
-        logger.debug('Finishing connection handler')
-        self.close()
+        logger.debug('Finished connection handler')
         
     def handle_request(self, req):
         try:
@@ -436,6 +445,7 @@ class ServerConnection(_Connection):
                 while offset < length:
                     write_record(Record(record.type, data[offset:offset+0xFFFF], record.request_id))
                     offset += 0xFFFF
+        self.close()
         logger.debug('Output handler finished')
 
 

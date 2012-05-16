@@ -10,7 +10,7 @@
 
 static PyObject *
 py_unpack_pairs(PyObject *self, PyObject *args) {
-	const char *buf, *name, *value, *end;
+	unsigned char *buf, *name, *value, *end;
 	int blen, nlen, vlen;
 	PyObject *result, *tuple;
 
