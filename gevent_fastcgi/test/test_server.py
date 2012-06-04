@@ -26,11 +26,13 @@
 
 import unittest
 import gevent
-from gevent_fastcgi import *
+from gevent_fastcgi.base import *
+from gevent_fastcgi.server import *
+from gevent_fastcgi.client import *
 from struct import pack, unpack
 
-#ADDR = ('127.0.0.1', 6000)
-ADDR = '/tmp/gevent-fastcgi.sock'
+ADDR = ('127.0.0.1', 6000)
+#ADDR = '/tmp/gevent-fastcgi.sock'
 TEST_DATA = 'abc' * 4096
 
 import logging
@@ -44,7 +46,7 @@ def app(environ, start_response):
     start_response('200 OK', headers)
     return environ['wsgi.input']
 
-class TestFastCGI(unittest.TestCase):
+class TestServer(unittest.TestCase):
     def setUp(self):
         self.server = WSGIServer(ADDR, app)
         self.server.start()
@@ -54,8 +56,8 @@ class TestFastCGI(unittest.TestCase):
         if isinstance(ADDR, basestring):
             import os
             os.unlink(ADDR)
-
-    def test_1_values(self):
+        
+    def test_get_values(self):
         conn = ClientConnection(ADDR)
         conn.send_get_values()
         while 1:
@@ -68,7 +70,7 @@ class TestFastCGI(unittest.TestCase):
                 break
         conn.close()
 
-    def test_2_responder(self):
+    def test_responder(self):
         name = 'World'
         conn = ClientConnection(ADDR)
         request_id = 123

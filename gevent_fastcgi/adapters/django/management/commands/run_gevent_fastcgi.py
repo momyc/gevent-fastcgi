@@ -27,7 +27,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from os.path import abspath, dirname, isdir
-        from gevent_fastcgi import WSGIServer
+        from gevent_fastcgi.server import WSGIServer
         from django.core.handlers.wsgi import WSGIHandler
         
         if not args:
