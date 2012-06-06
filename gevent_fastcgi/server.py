@@ -36,6 +36,22 @@ __all__ = ('run_server', 'WSGIServer')
 logger = getLogger(__name__)
 
 
+FCGI_ROLES = {FCGI_RESPONDER: 'RESPONDER', FCGI_AUTHORIZER: 'AUTHORIZER', FCGI_FILTER: 'FILTER'}
+EXISTING_REQUEST_REC_TYPES = frozenset((FCGI_STDIN, FCGI_PARAMS, FCGI_ABORT_REQUEST))
+FCGI_RECORD_TYPES = {
+    FCGI_BEGIN_REQUEST: 'FCGI_BEGIN_REQUEST',
+    FCGI_ABORT_REQUEST: 'FCGI_ABORT_REQUEST',
+    FCGI_END_REQUEST: 'FCGI_END_REQUEST',
+    FCGI_PARAMS: 'FCGI_PARAMS',
+    FCGI_STDIN: 'FCGI_STDIN',
+    FCGI_STDOUT: 'FCGI_STDOUT',
+    FCGI_STDERR: 'FCGI_STDERR',
+    FCGI_DATA: 'FCGI_DATA',
+    FCGI_GET_VALUES: 'FCGI_GET_VALUES',
+    FCGI_GET_VALUES_RESULT: 'FCGI_GET_VALUES_RESULT',
+}
+
+
 class Request(object):
     """
     FastCGI request representation for FastCGI connection multiplexing feature.
@@ -94,7 +110,7 @@ class Application(object):
             request.stdout.close()
             request.stderr.close()
         finally:
-            self.reply(FCGI_END_REQUEST, pack(END_REQUEST_STRUCT, 0, FCGI_REQUEST_COMPLETE), request.id)
+            self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
             del self.requests[request.id]
             if request.flags & FCGI_KEEP_CONN == 0:
                 self.conn.close()
@@ -106,7 +122,7 @@ class Application(object):
             self.run()
 
     def fcgi_begin_request(self, record):
-        role, flags = unpack(BEGIN_REQUEST_STRUCT, record.content)
+        role, flags = begin_request_struct.unpack(record.content)
         if role == self.server.role:
             request = Request(self.conn, record.request_id, flags)
             if role == FCGI_RESPONDER:
@@ -117,7 +133,7 @@ class Application(object):
             self.requests[request.id] = request
             logger.debug('New request %s with flags %04x', request.id, flags)
         else:
-            self.reply(FCGI_END_REQUEST, pack(END_REQUEST_STRUCT, 0,  FCGI_UNKNOWN_ROLE), record.request_id)
+            self.reply(FCGI_END_REQUEST, end_request_struct.pack(0,  FCGI_UNKNOWN_ROLE), record.request_id)
             logger.error('Unknown request role %s', role)
 
     def fcgi_params(self, record, request):
@@ -130,7 +146,7 @@ class Application(object):
         if request.greenlet:
             request.greenlet.kill()
             request.greenlet = None
-        self.reply(FCGI_END_REQUEST, pack(END_REQUEST_STRUCT, 0, FCGI_REQUEST_COMPLETE), request.id)
+        self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
         del self.requests[request.id]
 
     def fcgi_get_values(self, record):
@@ -161,7 +177,7 @@ class Application(object):
                 self.fcgi_get_values(record)
             else:
                 logger.error('%s: Unknown record type' % record)
-                self.reply(FCGI_UNKNOWN_TYPE, pack('!B7x', record.type))
+                self.reply(FCGI_UNKNOWN_TYPE, unknown_type_struct.pack(record.type))
                 self.conn.close()
                 break
 

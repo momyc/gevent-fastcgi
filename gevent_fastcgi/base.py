@@ -23,27 +23,30 @@ import os
 import sys
 import logging
 from tempfile import TemporaryFile
-from struct import pack, unpack
-
-from gevent import socket
-from gevent.event import Event
-
+from struct import Struct
 
 try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
 
-
-try:
-    memoryview
-except NameError:
-    # pre-2.7
-    def memoryview(data):
-        return data
+from gevent import socket
+from gevent.event import Event
 
 
-__all__ = ['Record', 'BaseConnection', 'ProtocolError', 'InputStream', 'OutputStream', 'pack_pairs', 'unpack_pairs']
+__all__ = [
+    'Record',
+    'BaseConnection',
+    'ProtocolError',
+    'InputStream',
+    'OutputStream',
+    'pack_pairs',
+    'unpack_pairs',
+    'header_struct',
+    'begin_request_struct',
+    'end_request_struct',
+    'unknown_type_struct',
+    ]
 
 
 FCGI_VERSION = 1
@@ -72,27 +75,10 @@ FCGI_CANT_MPX_CONN = 1
 FCGI_OVERLOADED = 2
 FCGI_UNKNOWN_ROLE = 3
 
-FCGI_RECORD_TYPES = {
-    FCGI_BEGIN_REQUEST: 'FCGI_BEGIN_REQUEST',
-    FCGI_ABORT_REQUEST: 'FCGI_ABORT_REQUEST',
-    FCGI_END_REQUEST: 'FCGI_END_REQUEST',
-    FCGI_PARAMS: 'FCGI_PARAMS',
-    FCGI_STDIN: 'FCGI_STDIN',
-    FCGI_STDOUT: 'FCGI_STDOUT',
-    FCGI_STDERR: 'FCGI_STDERR',
-    FCGI_DATA: 'FCGI_DATA',
-    FCGI_GET_VALUES: 'FCGI_GET_VALUES',
-    FCGI_GET_VALUES_RESULT: 'FCGI_GET_VALUES_RESULT',
-}
-
-FCGI_ROLES = {FCGI_RESPONDER: 'RESPONDER', FCGI_AUTHORIZER: 'AUTHORIZER', FCGI_FILTER: 'FILTER'}
-
-EXISTING_REQUEST_REC_TYPES = frozenset((FCGI_STDIN, FCGI_PARAMS, FCGI_ABORT_REQUEST))
-
-HEADER_STRUCT = '!BBHHBx'
-BEGIN_REQUEST_STRUCT = '!HB5x'
-END_REQUEST_STRUCT = '!LB3x'
-UNKNOWN_TYPE_STRUCT = '!B7x'
+header_struct = Struct('!BBHHBx')
+begin_request_struct = Struct('!HB5x')
+end_request_struct = Struct('!LB3x')
+unknown_type_struct = Struct('!B7x')
 
 __all__.extend(name for name in locals().keys() if name.upper() == name)
 
@@ -102,6 +88,8 @@ try:
     from gevent_fastcgi.speedups import pack_pair, unpack_pairs
 except ImportError:
 
+    length_struct = Struct('!L')
+
     def pack_pair(name, value):
         def _len(s):
             l = len(s)
@@ -109,39 +97,34 @@ except ImportError:
                 return chr(l)
             elif l > 0x7fffffff:
                 raise ValueError('Maximum name or value length is %d', 0x7fffffff)
-            return pack('!L', l | 0x80000000);
+            return length_struct.pack(l | 0x80000000);
         return ''.join((_len(name), _len(value), name, value))
 
-    def unpack_pairs(stream):
-        if isinstance(stream, basestring):
-            stream = StringIO(stream)
+    def unpack_pairs(data):
+        buf = buffer(data)
+        end = len(data)
+        pos = 0
 
         def read_len():
-            b = stream.read(1)
-            if not b:
-                return None
-            l = ord(b)
-            if l & 128:
-                b += stream.read(3)
-                if len(b) != 4:
-                    raise ProtocolError('Failed to read name length')
-                l = unpack('!L', b)[0] & 0x7FFFFFFF
-            return l
+            _len = ord(buf[pos])
+            if _len & 128:
+                _len = length_struct.unpack_from(buf, pos)[0] & 0x7fffffff
+                pos += 4
+            else:
+                pos += 1
+            return _len, pos
 
-        def read_str(l):
-            s = stream.read(l)
-            if len(s) != l:
-                raise ProtocolError('Tried to read %s bytes got %s only', l, len(s))
-            return s
-
-        while True:
-            name_len = read_len()
-            if name_len is None:
-                return
-            value_len = read_len()
-            if value_len is None:
-                raise ProtocolError('Failed to read value length')
-            yield read_str(name_len), read_str(value_len)
+        while pos < end:
+            try:
+                name_len, pos = read_len()
+                value_len, pos = read_len()
+                name = buf[pos:pos + name_len]
+                pos += name_len
+                value = buf[pos:pos + value_len]
+                pos += value_len
+                yield name, value
+            except (IndexError, struct.error):
+                raise ProtocolError('Failed to unpack name/value pairs')
 
 
 def pack_pairs(pairs):
@@ -259,9 +242,8 @@ class BaseConnection(object):
 
     def write_record(self, record):
         content_len = len(record.content)
-        padding = -content_len & 7
-        header = pack(HEADER_STRUCT, FCGI_VERSION, record.type, record.request_id, content_len, padding)
-        self._sock.sendall(''.join((header, record.content, '\x00' * padding)))
+        header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, 0)
+        map(self._sock.sendall, (header, record.content))
   
     def read_record(self):
         try:
@@ -269,7 +251,7 @@ class BaseConnection(object):
             if not header:
                 logger.debug('Peer closed connection')
                 return None
-            version, record_type, request_id, content_len, padding = unpack(HEADER_STRUCT, header)
+            version, record_type, request_id, content_len, padding = header_struct.unpack(header)
             if version != FCGI_VERSION:
                 raise ProtocolError('Unsopported FastCGI version %s', version)
             content = self._read_bytes(content_len)

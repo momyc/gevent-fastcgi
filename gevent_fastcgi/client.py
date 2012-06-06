@@ -51,7 +51,7 @@ class ClientConnection(BaseConnection):
         super(ClientConnection, self).__init__(sock)
 
     def send_begin_request(self, request_id, role=FCGI_RESPONDER, flags=0):
-        self.write_record(Record(FCGI_BEGIN_REQUEST, pack(BEGIN_REQUEST_STRUCT, FCGI_RESPONDER, flags), request_id))
+        self.write_record(Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(role, flags), request_id))
 
     def send_abort_request(self, request_id):
         self.write_record(Record(FCGI_ABORT_REQUEST, request_id=request_id))
@@ -71,5 +71,5 @@ class ClientConnection(BaseConnection):
         self.write_record(Record(FCGI_GET_VALUES))
 
     def unpack_end_request(self, data):
-        return unpack(END_REQUEST_STRUCT, data)
+        return end_request_struct.unpack(data)
 
