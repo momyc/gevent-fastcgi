@@ -75,6 +75,19 @@ FCGI_CANT_MPX_CONN = 1
 FCGI_OVERLOADED = 2
 FCGI_UNKNOWN_ROLE = 3
 
+FCGI_RECORD_TYPES = {
+    FCGI_BEGIN_REQUEST: 'FCGI_BEGIN_REQUEST',
+    FCGI_ABORT_REQUEST: 'FCGI_ABORT_REQUEST',
+    FCGI_END_REQUEST: 'FCGI_END_REQUEST',
+    FCGI_PARAMS: 'FCGI_PARAMS',
+    FCGI_STDIN: 'FCGI_STDIN',
+    FCGI_STDOUT: 'FCGI_STDOUT',
+    FCGI_STDERR: 'FCGI_STDERR',
+    FCGI_DATA: 'FCGI_DATA',
+    FCGI_GET_VALUES: 'FCGI_GET_VALUES',
+    FCGI_GET_VALUES_RESULT: 'FCGI_GET_VALUES_RESULT',
+}
+
 header_struct = Struct('!BBHHBx')
 begin_request_struct = Struct('!HB5x')
 end_request_struct = Struct('!LB3x')
@@ -90,34 +103,35 @@ except ImportError:
 
     length_struct = Struct('!L')
 
+    def pack_len(s):
+        l = len(s)
+        if l < 128:
+            return chr(l)
+        elif l > 0x7fffffff:
+            raise ValueError('Maximum name or value length is %d', 0x7fffffff)
+        return length_struct.pack(l | 0x80000000)
+
     def pack_pair(name, value):
-        def _len(s):
-            l = len(s)
-            if l < 128:
-                return chr(l)
-            elif l > 0x7fffffff:
-                raise ValueError('Maximum name or value length is %d', 0x7fffffff)
-            return length_struct.pack(l | 0x80000000);
-        return ''.join((_len(name), _len(value), name, value))
+        return ''.join((pack_len(name), pack_len(value), name, value))
+
+    def unpack_len(buf, pos):
+        _len = ord(buf[pos])
+        if _len & 128:
+            _len = length_struct.unpack_from(buf, pos)[0] & 0x7fffffff
+            pos += 4
+        else:
+            pos += 1
+        return _len, pos
 
     def unpack_pairs(data):
         buf = buffer(data)
         end = len(data)
         pos = 0
 
-        def read_len():
-            _len = ord(buf[pos])
-            if _len & 128:
-                _len = length_struct.unpack_from(buf, pos)[0] & 0x7fffffff
-                pos += 4
-            else:
-                pos += 1
-            return _len, pos
-
         while pos < end:
             try:
-                name_len, pos = read_len()
-                value_len, pos = read_len()
+                name_len, pos = unpack_len()
+                value_len, pos = unpack_len()
                 name = buf[pos:pos + name_len]
                 pos += name_len
                 value = buf[pos:pos + value_len]
@@ -125,7 +139,6 @@ except ImportError:
                 yield name, value
             except (IndexError, struct.error):
                 raise ProtocolError('Failed to unpack name/value pairs')
-
 
 def pack_pairs(pairs):
     if isinstance(pairs, dict):
@@ -145,6 +158,9 @@ class Record(object):
         self.type = type
         self.content = content
         self.request_id = request_id
+
+    def __str__(self):
+        return '<Record %s, req id %s, %d bytes>' % (FCGI_RECORD_TYPES.get(self.type, self.type), self.request_id, len(self.content))
 
 
 class InputStream(object):
@@ -215,9 +231,19 @@ class OutputStream(object):
         if self.closed:
             logger.warn('Write to closed %s', self)
             return
+
         if self.record_type == FCGI_STDERR:
             sys.stderr.write(data)
-        self.conn.write_record(Record(self.record_type, data, self.request_id))
+
+        data_len = len(data)
+
+        if data_len <= 0xffff:
+            self.conn.write_record(Record(self.record_type, data, self.request_id))
+        else:
+            sent = 0
+            while sent < data_len:
+                self.conn.write_record(Record(self.record_type, buffer(data, sent, 0xffff), self.request_id))
+                sent += 0xffff
 
     def flush(self):
         pass

@@ -56,16 +56,22 @@ class ClientConnection(BaseConnection):
     def send_abort_request(self, request_id):
         self.write_record(Record(FCGI_ABORT_REQUEST, request_id=request_id))
 
-    def send_params(self, params='', request_id=1):
+    def send_params(self, params, request_id):
         if params:
             params = ''.join(pack_pairs(params))
-        self.write_record(Record(FCGI_PARAMS, params, request_id))
+        else:
+            params = ''
+        self.send_stream(FCGI_PARAMS, params, request_id)
 
-    def send_stdin(self, content='', request_id=1):
-        self.write_record(Record(FCGI_STDIN, content, request_id))
-
-    def send_data(self, content='', request_id=1):
-        self.write_record(Record(FCGI_DATA, content, request_id))
+    def send_stream(self, stream, content='', request_id=1):
+        content_len = len(content)
+        if content_len <= 0xffff:
+            self.write_record(Record(stream, content, request_id))
+        else:
+            sent = 0
+            while sent < content_len:
+                self.write_record(Record(stream, buffer(content, sent, 0xffff), request_id))
+                sent += 0xffff
 
     def send_get_values(self):
         self.write_record(Record(FCGI_GET_VALUES))

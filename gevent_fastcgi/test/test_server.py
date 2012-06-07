@@ -33,7 +33,7 @@ from struct import pack, unpack
 
 ADDR = ('127.0.0.1', 6000)
 #ADDR = '/tmp/gevent-fastcgi.sock'
-TEST_DATA = 'abc' * 4096
+TEST_DATA = 'abc' * 0xfff3
 
 import logging
 # logging.basicConfig(level=logging.DEBUG)
@@ -82,9 +82,9 @@ class TestServer(unittest.TestCase):
             ('CONTENT_TYPE', 'application/octet-stream'),
             ('CONTENT_LENGTH', str(len(TEST_DATA))),
             ], request_id=request_id)
-        conn.send_params(request_id=request_id)
-        conn.send_stdin(TEST_DATA, request_id=request_id)
-        conn.send_stdin(request_id=request_id)
+        conn.send_params({}, request_id=request_id)
+        conn.send_stream(FCGI_STDIN, TEST_DATA, request_id=request_id)
+        conn.send_stream(FCGI_STDIN, request_id=request_id)
         while True:
             record = conn.read_record()
             self.assertEqual(record.request_id, request_id)
