@@ -2,7 +2,7 @@ from setuptools import setup, Extension, find_packages
 
 
 setup(name='gevent-fastcgi',
-      version='0.1.5dev',
+      version='0.1.6dev',
       description='FastCGI/WSGI client and server implemented using gevent library',
       long_description='''FastCGI/WSGI server implemented using gevent library.
       Supports connection multiplexing. Compatibe with PasteDeploy.''',
