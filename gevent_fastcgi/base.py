@@ -302,6 +302,8 @@ class BaseConnection(object):
 
     def close(self):
         if self._sock:
+            self._sock.shutdown(socket.SHUT_RD | socket.SHUT_WR)
+            self._sock._sock.close() # gevent.pywsgi does the same
             self._sock.close()
             self._sock = None
             logger.debug('Connection closed')
