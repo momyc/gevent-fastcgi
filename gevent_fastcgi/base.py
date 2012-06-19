@@ -23,7 +23,7 @@ import os
 import sys
 import logging
 from tempfile import TemporaryFile
-from struct import Struct
+import struct
 
 try:
     from cStringIO import StringIO
@@ -88,12 +88,16 @@ FCGI_RECORD_TYPES = {
     FCGI_GET_VALUES_RESULT: 'FCGI_GET_VALUES_RESULT',
 }
 
-header_struct = Struct('!BBHHBx')
-begin_request_struct = Struct('!HB5x')
-end_request_struct = Struct('!LB3x')
-unknown_type_struct = Struct('!B7x')
+FCGI_MAX_CONNS = 'FCGI_MAX_CONNS'
+FCGI_MAX_REQS = 'FCGI_MAX_REQS'
+FCGI_MPXS_CONNS = 'FCGI_MPXS_CONNS'
 
 __all__.extend(name for name in locals().keys() if name.upper() == name)
+
+header_struct = struct.Struct('!BBHHBx')
+begin_request_struct = struct.Struct('!HB5x')
+end_request_struct = struct.Struct('!LB3x')
+unknown_type_struct = struct.Struct('!B7x')
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +105,7 @@ try:
     from gevent_fastcgi.speedups import pack_pair, unpack_pairs
 except ImportError:
 
-    length_struct = Struct('!L')
+    length_struct = struct.Struct('!L')
 
     def pack_len(s):
         l = len(s)
@@ -124,17 +128,15 @@ except ImportError:
         return _len, pos
 
     def unpack_pairs(data):
-        buf = buffer(data)
         end = len(data)
         pos = 0
-
         while pos < end:
             try:
-                name_len, pos = unpack_len()
-                value_len, pos = unpack_len()
-                name = buf[pos:pos + name_len]
+                name_len, pos = unpack_len(data, pos)
+                value_len, pos = unpack_len(data, pos)
+                name = data[pos:pos + name_len]
                 pos += name_len
-                value = buf[pos:pos + value_len]
+                value = data[pos:pos + value_len]
                 pos += value_len
                 yield name, value
             except (IndexError, struct.error):
@@ -234,16 +236,8 @@ class OutputStream(object):
 
         if self.record_type == FCGI_STDERR:
             sys.stderr.write(data)
-
-        data_len = len(data)
-
-        if data_len <= 0xffff:
-            self.conn.write_record(Record(self.record_type, data, self.request_id))
-        else:
-            sent = 0
-            while sent < data_len:
-                self.conn.write_record(Record(self.record_type, buffer(data, sent, 0xffff), self.request_id))
-                sent += 0xffff
+        
+        self.conn.write_record(Record(self.record_type, data, self.request_id))
 
     def flush(self):
         pass
@@ -263,29 +257,53 @@ class BaseConnection(object):
     FastCGI wire protocol implementation.
     """
 
-    def __init__(self, sock, *args, **kwargs):
+    def __init__(self, sock, buffer_size=4096, *args, **kwargs):
         self._sock = sock
+        self.reader = self.reader(buffer_size)
+        self.reader.next()
 
     def write_record(self, record):
+        sendall = self._sock.sendall
         content_len = len(record.content)
-        header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, 0)
-        map(self._sock.sendall, (header, record.content))
+        padding = 0
+        if content_len <= 0xffff:
+            header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, padding)
+            sendall(header)
+            if content_len:
+                sendall(record.content)
+                if padding:
+                    sendall('\0' * padding)
+        elif record.type in (FCGI_STDIN, FCGI_STDOUT, FCGI_STDERR, FCGI_DATA):
+            sent = 0
+            content = record.content
+            while sent < content_len:
+                chunk_len = min(0xffff, content_len)
+                header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, chunk_len, padding)
+                sendall(header)
+                sendall(content[sent:sent+chunk_len])
+                if padding:
+                    sendall('\0' * padding)
+                sent += chunk_len
+        else:
+            raise ValueError('Content length %d exceeds maximum of %d', content_len, 0xffff)
   
     def read_record(self):
+        read = self.reader.send
         try:
-            header = self._read_bytes(FCGI_RECORD_HEADER_LEN)
+            header = read(FCGI_RECORD_HEADER_LEN)
             if not header:
                 logger.debug('Peer closed connection')
                 return None
             version, record_type, request_id, content_len, padding = header_struct.unpack(header)
             if version != FCGI_VERSION:
                 raise ProtocolError('Unsopported FastCGI version %s', version)
-            content = self._read_bytes(content_len)
+            if content_len:
+                content = read(content_len)
+            else:
+                content = ''
             if padding:
-                self._read_bytes(padding)
-            
-            record = Record(record_type, content, request_id)
-            return record
+                read(padding)
+            return Record(record_type, content, request_id)
         except socket.error, ex:
             logger.exception('Failed to read record from peer')
             self.close()
@@ -303,19 +321,38 @@ class BaseConnection(object):
     def close(self):
         if self._sock:
             self._sock.shutdown(socket.SHUT_RD | socket.SHUT_WR)
-            self._sock._sock.close() # gevent.pywsgi does the same
             self._sock.close()
             self._sock = None
             logger.debug('Connection closed')
 
-    def _read_bytes(self, num):
-        chunks = []
+    def reader(self, buf_size):
         recv = self._sock.recv
-        while num > 0:
-            chunk = recv(num)
-            if not chunk:
-                break
-            num -= len(chunk)
-            chunks.append(chunk)
-        return ''.join(chunks)
+        buf = ''
+        blen = 0
+        chunks = []
+        requested = (yield)
+        while True:
+            if blen >= requested:
+                data, buf = buf[:requested], buf[requested:]
+                blen -= requested
+            else:
+                while blen < requested:
+                    if buf:
+                        chunks.append(buf)
+                    buf = recv(max(buf_size, requested - blen))
+                    rlen = len(buf)
+                    if not rlen:
+                        break # EOF
+                    blen += rlen
+                blen -= requested
+                if blen:
+                    chunks.append(buf[:-blen])
+                    buf = buf[-blen:]
+                else:
+                    chunks.append(buf)
+                    buf = ''
+                data = ''.join(chunks)
+                chunks = []
+            
+            requested = yield data
 

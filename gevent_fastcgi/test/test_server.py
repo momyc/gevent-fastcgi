@@ -36,7 +36,7 @@ ADDR = ('127.0.0.1', 6000)
 TEST_DATA = 'abc' * 0xfff3
 
 import logging
-# logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.DEBUG)
 
 def app(environ, start_response):
     headers = [
@@ -59,15 +59,12 @@ class TestServer(unittest.TestCase):
         
     def test_get_values(self):
         conn = ClientConnection(ADDR)
-        conn.send_get_values()
-        while 1:
-            record = conn.read_record()
-            self.assertEqual(record.type, FCGI_GET_VALUES_RESULT)
-            self.assertEqual(record.request_id, FCGI_NULL_REQUEST_ID)
-            if record.content:
-                values = dict(unpack_pairs(record.content))
-            else:
-                break
+        conn.send_get_values((FCGI_MAX_CONNS, FCGI_MAX_REQS, FCGI_MPXS_CONNS))
+        record = conn.read_record()
+        self.assertEqual(record.type, FCGI_GET_VALUES_RESULT)
+        self.assertEqual(record.request_id, FCGI_NULL_REQUEST_ID)
+        if record.content:
+            values = dict(unpack_pairs(record.content))
         conn.close()
 
     def test_responder(self):

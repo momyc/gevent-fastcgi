@@ -70,11 +70,13 @@ class ClientConnection(BaseConnection):
         else:
             sent = 0
             while sent < content_len:
-                self.write_record(Record(stream, buffer(content, sent, 0xffff), request_id))
-                sent += 0xffff
+                chunk_len = min(content_len - sent, 0xffff)
+                self.write_record(Record(stream, content[sent:sent + chunk_len], request_id))
+                sent += chunk_len
 
-    def send_get_values(self):
-        self.write_record(Record(FCGI_GET_VALUES))
+    def send_get_values(self, names):
+        content = pack_pairs((name, '') for name in names)
+        self.write_record(Record(FCGI_GET_VALUES, content))
 
     def unpack_end_request(self, data):
         return end_request_struct.unpack(data)

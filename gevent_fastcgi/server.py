@@ -21,7 +21,6 @@
 
 from wsgiref.handlers import BaseCGIHandler
 from logging import getLogger
-from struct import pack, unpack
 
 from gevent import socket, spawn
 from gevent.queue import Queue
@@ -59,7 +58,7 @@ class ServerConnection(BaseConnection):
     """
     def __init__(self, sock):
         super(ServerConnection, self).__init__(sock)
-        self._queue = Queue()
+        self._queue = Queue(0)
         self._handler = spawn(self._handle_output)
 
     def write_record(self, record):
@@ -81,7 +80,7 @@ class ServerConnection(BaseConnection):
             write_record(record)
 
 
-class Application(object):
+class ConnectionHandler(object):
 
     def __init__(self, server, conn):
         self.server = server
@@ -102,12 +101,6 @@ class Application(object):
             del self.requests[request.id]
             if request.flags & FCGI_KEEP_CONN == 0:
                 self.conn.close()
-
-    def fcgi_params(self, record, request):
-        if record.content:
-            request.environ.update(map(unpack_pair, record.content))
-        else:
-            self.run()
 
     def fcgi_begin_request(self, record):
         role, flags = begin_request_struct.unpack(record.content)
@@ -138,8 +131,10 @@ class Application(object):
         del self.requests[request.id]
 
     def fcgi_get_values(self, record):
-        self.reply(FCGI_GET_VALUES_RESULT, self.server.values)
-        self.reply(FCGI_GET_VALUES_RESULT)
+        vars = unpack_pairs(record.content)
+        pairs = ((name, str(self.server.capability(name))) for name, value in vars)
+        content = pack_pairs((name, value) for name, value in pairs if value)
+        self.reply(FCGI_GET_VALUES_RESULT, content)
 
     def run(self):
         """Main connection loop
@@ -203,16 +198,24 @@ class WSGIServer(StreamServer):
         
         self.role = role
         self.app = app
-        self.values = ''.join(pack_pairs([
-            ('FCGI_MAX_CONNS', str(max_conns)),
-            ('FCGI_MAX_REQS', str(max_reqs)),
-            ('FCGI_MPXS_CONNS', '1'),]))
+        self.capabilities = dict(
+                FCGI_MAX_CONNS=max_conns,
+                FCGI_MAX_REQS=0xffff,
+                FCGO_MPXS_CONNS=1,
+                )
 
     def handle_connection(self, sock, addr):
+        #import gevent_profiler
+
         logger.debug('New connection from %s', addr)
         conn = ServerConnection(sock)
-        handler = Application(self, conn)
+        handler = ConnectionHandler(self, conn)
+        #gevent_profiler.attach()
         handler.run()
+        #gevent_profiler.detach()
+
+    def capability(self, name):
+        return self.capabilities.get(name)
 
 
 def run_server(app, conf, host='127.0.0.1', port=5000, path=None, **kwargs):
