@@ -73,9 +73,13 @@ class TestServer(unittest.TestCase):
         request_id = 123
         conn.send_begin_request(request_id=request_id)
         conn.send_params([
+            ('SERVER_NAME', 'localhost'),
+            ('SERVER_PORT', '80'),
+            ('SERVER_PROTOCOL', 'HTTP/1.0'),
+            ('REQUEST_METHOD', 'POST'),
             ('SCRIPT_NAME', '/'),
             ('PATH_INFO', '/%s' % name),
-            ('REQUEST_METHOD', 'POST'),
+            ('QUERY_STRING', ''),
             ('CONTENT_TYPE', 'application/octet-stream'),
             ('CONTENT_LENGTH', str(len(TEST_DATA))),
             ], request_id=request_id)
@@ -84,6 +88,9 @@ class TestServer(unittest.TestCase):
         conn.send_stream(FCGI_STDIN, request_id=request_id)
         while True:
             record = conn.read_record()
+            if record is None:
+                break
+            self.assertTrue(record is not None)
             self.assertEqual(record.request_id, request_id)
             self.assertIn(record.type, (FCGI_STDOUT, FCGI_STDERR, FCGI_END_REQUEST))
             if record.type == FCGI_STDERR:

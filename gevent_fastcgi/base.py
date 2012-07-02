@@ -22,6 +22,7 @@
 import os
 import sys
 import logging
+from errno import EPIPE, ECONNRESET
 from tempfile import TemporaryFile
 import struct
 
@@ -234,6 +235,9 @@ class OutputStream(object):
             logger.warn('Write to closed %s', self)
             return
 
+        if not data:
+            return
+
         if self.record_type == FCGI_STDERR:
             sys.stderr.write(data)
         
@@ -265,24 +269,16 @@ class BaseConnection(object):
     def write_record(self, record):
         sendall = self._sock.sendall
         content_len = len(record.content)
-        padding = 0
         if content_len <= 0xffff:
-            header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, padding)
-            sendall(header)
-            if content_len:
-                sendall(record.content)
-                if padding:
-                    sendall('\0' * padding)
+            header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, 0)
+            sendall(header + record.content)
         elif record.type in (FCGI_STDIN, FCGI_STDOUT, FCGI_STDERR, FCGI_DATA):
             sent = 0
             content = record.content
             while sent < content_len:
-                chunk_len = min(0xffff, content_len)
-                header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, chunk_len, padding)
-                sendall(header)
-                sendall(content[sent:sent+chunk_len])
-                if padding:
-                    sendall('\0' * padding)
+                chunk_len = min(0xfff8, content_len - sent)
+                header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, chunk_len, 0)
+                sendall(header + content[sent:sent+chunk_len])
                 sent += chunk_len
         else:
             raise ValueError('Content length %d exceeds maximum of %d', content_len, 0xffff)
@@ -291,23 +287,34 @@ class BaseConnection(object):
         read = self.reader.send
         try:
             header = read(FCGI_RECORD_HEADER_LEN)
-            if not header:
-                logger.debug('Peer closed connection')
-                return None
-            version, record_type, request_id, content_len, padding = header_struct.unpack(header)
-            if version != FCGI_VERSION:
-                raise ProtocolError('Unsopported FastCGI version %s', version)
+        except socket.error, ex:
+            header = None
+            if ex[0] in (EPIPE, ECONNRESET):
+                sys.exc_clear()
+
+        if not header:
+            logger.debug('Peer closed connection')
+            return None
+
+        version, record_type, request_id, content_len, padding = header_struct.unpack(header)
+        
+        if version != FCGI_VERSION:
+            raise ProtocolError('Unsopported FastCGI version %s', version)
+        
+        try:
             if content_len:
                 content = read(content_len)
             else:
                 content = ''
+        
             if padding:
                 read(padding)
-            return Record(record_type, content, request_id)
         except socket.error, ex:
             logger.exception('Failed to read record from peer')
             self.close()
             return None
+
+        return Record(record_type, content, request_id)
 
     def __iter__(self):
         return self
@@ -320,7 +327,8 @@ class BaseConnection(object):
 
     def close(self):
         if self._sock:
-            self._sock.shutdown(socket.SHUT_RD | socket.SHUT_WR)
+            # self._sock.shutdown(socket.SHUT_RD | socket.SHUT_WR)
+            self._sock._sock.close()
             self._sock.close()
             self._sock = None
             logger.debug('Connection closed')

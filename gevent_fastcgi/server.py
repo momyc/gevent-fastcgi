@@ -23,7 +23,7 @@ from wsgiref.handlers import BaseCGIHandler
 from logging import getLogger
 
 from gevent import socket, spawn
-from gevent.queue import Queue
+from gevent.event import Event
 from gevent.server import StreamServer
 
 from gevent_fastcgi.base import *
@@ -36,48 +36,148 @@ logger = getLogger(__name__)
 
 
 FCGI_ROLES = {FCGI_RESPONDER: 'RESPONDER', FCGI_AUTHORIZER: 'AUTHORIZER', FCGI_FILTER: 'FILTER'}
-EXISTING_REQUEST_REC_TYPES = frozenset((FCGI_STDIN, FCGI_PARAMS, FCGI_ABORT_REQUEST))
+
+EXISTING_REQUEST_REC_TYPES = frozenset((
+    FCGI_STDIN,
+    FCGI_PARAMS,
+    FCGI_ABORT_REQUEST,
+    ))
+
+MANDATORY_WSGI_ENVIRON_VARS = frozenset((
+    'REQUEST_METHOD',
+    'SCRIPT_NAME',
+    'PATH_INFO',
+    'QUERY_STRING',
+    'CONTENT_TYPE',
+    'CONTENT_LENGTH',
+    'SERVER_NAME',
+    'SERVER_PORT',
+    'SERVER_PROTOCOL',
+    ))
+
+
+class Response(object):
+
+    def __init__(self, status, headers):
+        self.status = status
+        self.headers = [(name.lower(), value) for name, value in headers]
+        self.headers_sent = False
 
 
 class Request(object):
     """
     FastCGI request representation for FastCGI connection multiplexing feature.
     """
-    def __init__(self, conn, id, flags):
+    def __init__(self, conn, id, role, flags):
         self.id = id
+        self.role = role
         self.flags = flags
-        self.environ = {}
-        self.greenlet = None
+        self.environ = []
         self.stdout = OutputStream(conn, id, FCGI_STDOUT)
         self.stderr = OutputStream(conn, id, FCGI_STDERR)
+        self.response = None
+
+    def run_app(self, application):
+        environ = self._make_environ()
+        response = application(environ, self._start_response)
+        
+        write = self.stdout.write
+        
+        # do nothing until first non-empty chunk
+        for chunk in response:
+            if chunk:
+                self._send_headers()
+                write(chunk)
+                break
+        
+        map(write, response)
+
+        if not self.response.headers_sent:
+            self._send_headers()
+
+        self.stdout.close()
+        self.stderr.close()
+
+        close = getattr(response, 'close', None)
+        if close is not None:
+            close()
+
+    def _make_environ(self):
+        env = self.environ
+        
+        if not MANDATORY_WSGI_ENVIRON_VARS.issubset(env):
+            raise AssertionError('Missing mandatory WSGI environment variable(s): %s',
+                    ','.join(MANDATORY_WSGI_ENVIRON_VARS.difference(env)))
+
+        env['wsgi.version'] = (1, 0)
+        env['wsgi.input'] = self.stdin
+        env['wsgi.errors'] = self.stderr
+        env['wsgi.multithread'] = True # the same application may be simulteneously invoked in the same process
+        env['wsgi.multiprocess'] = False
+        env['wsgi.run_once'] = False
+
+        https = env.get('HTTPS','').lower()
+        if https in ('yes', 'on', '1'):
+            env['wsgi.url_scheme'] = 'https'
+        else:
+            env['wsgi.url_scheme'] = 'http'
+
+        return env
+
+    def _start_response(self, status, headers, exc_info=None):
+        if exc_info is not None:
+            try:
+                if self.status:
+                    raise exc_info[1].with_traceback(exc_info[2])
+            finally:
+                exc_info = None
+
+        assert self.response is None, 'start_response called more than once'
+
+        self.response = Response(status, headers)
+
+        return self._write_from_app
+
+    def _send_headers(self):
+        data = ['Status: %s' % self.response.status]
+        data.extend('%s: %s' % hdr for hdr in self.response.headers)
+        data.append('\r\n')
+        self.stdout.write('\r\n'.join(data))
+        self.response.headers_sent = True
+
+    def _write_from_app(self, chunk):
+        if not chunk:
+            return
+        if not self.response.headers_sent:
+            self._send_headers()
+        self.stdout.write(chunk)
 
 
 class ServerConnection(BaseConnection):
-    """
-    FastCGI server connection spawns output handler to serialize output
-    """
-    def __init__(self, sock):
-        super(ServerConnection, self).__init__(sock)
-        self._queue = Queue(0)
-        self._handler = spawn(self._handle_output)
+
+    def __init__(self, *args, **kw):
+        super(ServerConnection, self).__init__(*args, **kw)
+        self.busy = False
+        self.ready = Event()
+
+    def __enter__(self):
+        while self.busy:
+            self.ready.wait()
+        self.busy = True
+        self.ready.clear()
+
+    def __exit__(self, type, value, tb):
+        self.busy = False
+        self.ready.set()
 
     def write_record(self, record):
-        self._queue.put(record)
-        
-    def close(self):
-        if not self._handler.ready():
-            self._queue.put(None)
-            self._handler.join()
-        super(ServerConnection, self).close()
+        with self:
+            super(ServerConnection, self).write_record(record)
 
-    def _handle_output(self):
-        write_record = super(ServerConnection, self).write_record
-        for record in self._queue:
-            if record is None:
-                super(ServerConnection, self).close()
-                logger.debug('Output handler finished')
-                break
-            write_record(record)
+    def close(self):
+        with self:
+            logger.debug('Closing server connection')
+            super(ServerConnection, self).close()
 
 
 class ConnectionHandler(object):
@@ -92,10 +192,11 @@ class ConnectionHandler(object):
 
     def run_app(self, request):
         try:
-            handler = BaseCGIHandler(request.stdin, request.stdout, request.stderr, request.environ)
-            handler.run(self.server.app)
-            request.stdout.close()
-            request.stderr.close()
+            #handler = BaseCGIHandler(request.stdin, request.stdout, request.stderr, request.environ)
+            #handler.run(self.server.app)
+            #request.stdout.close()
+            #request.stderr.close()
+            request.run_app(self.server.app)
         finally:
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
             del self.requests[request.id]
@@ -105,7 +206,7 @@ class ConnectionHandler(object):
     def fcgi_begin_request(self, record):
         role, flags = begin_request_struct.unpack(record.content)
         if role == self.server.role:
-            request = Request(self.conn, record.request_id, flags)
+            request = Request(self.conn, record.request_id, role, flags)
             if role == FCGI_RESPONDER:
                 request.stdin = InputStream()
             elif role == FCGI_FILTER:
@@ -119,8 +220,9 @@ class ConnectionHandler(object):
 
     def fcgi_params(self, record, request):
         if record.content:
-            request.environ.update(unpack_pairs(record.content))
+            request.environ.append(record.content)
         else:
+            request.environ = dict(unpack_pairs(''.join(request.environ)))
             request.greenlet = spawn(self.run_app, request)
 
     def fcgi_abort_request(self, record, request):
