@@ -6,8 +6,12 @@ Supports connection multiplexing. Out-of-the-box support for Django and framewor
 
 ## Installation
 
-```bash
-$ python setup.py install
+```
+$ pip install gevent-fastcgi
+```
+or
+```
+$ easy_install gevent-fastcgi
 ```
 
 ## Usage
