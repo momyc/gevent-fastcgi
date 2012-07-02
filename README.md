@@ -22,8 +22,9 @@ server = WSGIServer(('127.0.0.1', 4000), app, max_conns=1024)
 
 server.serve_forever()
 ```
-PasteDeploy ini-file usage:
+### PasteDeploy
 
+Gevent-fastcgi defines paste.server_runner entry point. Use it as following:
 ```
 ...
 [server:main]
@@ -35,8 +36,9 @@ port = 4000
 max_conns = 1024
 ...
 ```
+### Django
 
-To run a Django application, add "gevent_fastcgi.adapters.django" to INSTALLED_APPS of your application settings.py then run the following command (replace host:port with desired values)
+Add "gevent_fastcgi.adapters.django" to INSTALLED_APPS of settings.py then run the following command (replace host:port with desired values)
 ```
 python manage.py run_gevent_fastcgi host:port
 ```
