@@ -22,7 +22,7 @@ server = WSGIServer(('127.0.0.1', 4000), app, max_conns=1024)
 
 server.serve_forever()
 ```
-It can also be used as server for paster ini-scripts as following:
+PasteDeploy ini-file usage:
 
 ```
 ...
@@ -36,3 +36,7 @@ max_conns = 1024
 ...
 ```
 
+To run a Django application, add "gevent_fastcgi.adapters.django" to INSTALLED_APPS of your application settings.py then run the following command (replace host:port with desired values)
+```
+python manage.py run_gevent_fastcgi host:port
+```
