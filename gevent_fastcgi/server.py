@@ -22,7 +22,7 @@
 from wsgiref.handlers import BaseCGIHandler
 from logging import getLogger
 
-from gevent import socket, spawn
+from gevent import socket, spawn, joinall
 from gevent.event import Event
 from gevent.server import StreamServer
 
@@ -105,9 +105,8 @@ class Request(object):
     def _make_environ(self):
         env = self.environ
         
-        if not MANDATORY_WSGI_ENVIRON_VARS.issubset(env):
-            raise AssertionError('Missing mandatory WSGI environment variable(s): %s',
-                    ','.join(MANDATORY_WSGI_ENVIRON_VARS.difference(env)))
+        for name in MANDATORY_WSGI_ENVIRON_VARS.difference(env):
+            env[name] = ''
 
         env['wsgi.version'] = (1, 0)
         env['wsgi.input'] = self.stdin
@@ -153,7 +152,7 @@ class Request(object):
         self.stdout.write(chunk)
 
 
-class ServerConnection(BaseConnection):
+class ServerConnection(Connection):
 
     def __init__(self, *args, **kw):
         super(ServerConnection, self).__init__(*args, **kw)
@@ -176,7 +175,6 @@ class ServerConnection(BaseConnection):
 
     def close(self):
         with self:
-            logger.debug('Closing server connection')
             super(ServerConnection, self).close()
 
 
@@ -200,7 +198,7 @@ class ConnectionHandler(object):
         finally:
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
             del self.requests[request.id]
-            if request.flags & FCGI_KEEP_CONN == 0:
+            if not self.requests and (request.flags & FCGI_KEEP_CONN == 0):
                 self.conn.close()
 
     def fcgi_begin_request(self, record):
@@ -213,7 +211,6 @@ class ConnectionHandler(object):
                 request.stdin = InputStream()
                 request.data = InputStream()
             self.requests[request.id] = request
-            logger.debug('New request %s with flags %04x', request.id, flags)
         else:
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0,  FCGI_UNKNOWN_ROLE), record.request_id)
             logger.error('Unknown request role %s', role)
@@ -233,9 +230,8 @@ class ConnectionHandler(object):
         del self.requests[request.id]
 
     def fcgi_get_values(self, record):
-        vars = unpack_pairs(record.content)
-        pairs = ((name, str(self.server.capability(name))) for name, value in vars)
-        content = pack_pairs((name, value) for name, value in pairs if value)
+        pairs = ((name, self.server.capability(name)) for name, _ in unpack_pairs(record.content))
+        content = pack_pairs((name, str(value)) for name, value in pairs if value)
         self.reply(FCGI_GET_VALUES_RESULT, content)
 
     def run(self):
@@ -266,7 +262,7 @@ class ConnectionHandler(object):
                 self.conn.close()
                 break
 
-        logger.debug('Finished connection handler')
+        joinall([request.greenlet for request in requests.values()])
 
 
 class WSGIServer(StreamServer):
@@ -280,6 +276,8 @@ class WSGIServer(StreamServer):
             sock.bind(bind_address)
             sock.listen(max_conns)
             bind_address = sock
+
+        self.buffer_size = int(kwargs.pop('buffer_size', 1024))
 
         super(WSGIServer, self).__init__(bind_address, self.handle_connection, spawn=max_conns, **kwargs)
 
@@ -302,19 +300,14 @@ class WSGIServer(StreamServer):
         self.app = app
         self.capabilities = dict(
                 FCGI_MAX_CONNS=max_conns,
-                FCGI_MAX_REQS=0xffff,
+                FCGI_MAX_REQS=max_reqs,
                 FCGO_MPXS_CONNS=1,
                 )
 
     def handle_connection(self, sock, addr):
-        #import gevent_profiler
-
-        logger.debug('New connection from %s', addr)
-        conn = ServerConnection(sock)
+        conn = Connection(sock, self.buffer_size)
         handler = ConnectionHandler(self, conn)
-        #gevent_profiler.attach()
         handler.run()
-        #gevent_profiler.detach()
 
     def capability(self, name):
         return self.capabilities.get(name)

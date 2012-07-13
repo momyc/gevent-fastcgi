@@ -25,6 +25,7 @@ import logging
 from errno import EPIPE, ECONNRESET
 from tempfile import TemporaryFile
 import struct
+from decorator import decorator
 
 try:
     from cStringIO import StringIO
@@ -34,10 +35,11 @@ except ImportError:
 from gevent import socket
 from gevent.event import Event
 
+sys.setcheckinterval(1000000)
 
 __all__ = [
     'Record',
-    'BaseConnection',
+    'Connection',
     'ProtocolError',
     'InputStream',
     'OutputStream',
@@ -47,6 +49,8 @@ __all__ = [
     'begin_request_struct',
     'end_request_struct',
     'unknown_type_struct',
+    'coroutine',
+    'buffered_reader',
     ]
 
 
@@ -149,6 +153,58 @@ def pack_pairs(pairs):
 
     return ''.join(pack_pair(name, value) for name, value in pairs)
 
+@decorator
+def coroutine(func, *args, **kw):
+    result = func(*args, **kw)
+    result.next()
+    return result
+
+@coroutine
+def buffered_reader(read, buf_size):
+    """
+    Coroutine that yields exact number of bytes requested. Uses buffers for performance
+    """
+    buf = ''
+    blen = 0
+    chunks = []
+    requested = (yield)
+    while True:
+        if blen >= requested:
+            data, buf = buf[:requested], buf[requested:]
+            blen -= requested
+        else:
+            while blen < requested:
+                chunks.append(buf)
+                try:
+                    buf = read(buf_size)
+                    rlen = len(buf)
+                except socket.error, x:
+                    rlen = 0
+                if not rlen:
+                    raise PartialRead(requested, ''.join(chunks))
+                blen += rlen
+            blen -= requested
+            if blen:
+                chunks.append(buf[:-blen])
+                buf = buf[-blen:]
+            else:
+                chunks.append(buf)
+                buf = ''
+            data = ''.join(chunks)
+            chunks = []
+        
+        requested = yield data
+
+
+class PartialRead(Exception):
+    """
+    Raised by buffered_reader when it fails to read requested length of data
+    """
+    def __init__(self, expected, data):
+        super(PartialRead, self).__init__('Expected %s but received %s bytes only', expected, len(data))
+        self.expected = expected
+        self.data = data
+
 
 class ProtocolError(Exception):
     pass
@@ -166,10 +222,71 @@ class Record(object):
         return '<Record %s, req id %s, %d bytes>' % (FCGI_RECORD_TYPES.get(self.type, self.type), self.request_id, len(self.content))
 
 
+class Connection(object):
+    """
+    FastCGI wire protocol implementation
+    """
+    def __init__(self, sock, buffer_size=4096):
+        self._sock = sock
+        self.buffered_reader = buffered_reader(sock.recv, buffer_size)
+
+    def write_record(self, record):
+        sendall = self._sock.sendall
+        content_len = len(record.content)
+        if content_len <= 0xffff:
+            header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, 0)
+            sendall(header + record.content)
+        elif record.type in (FCGI_STDIN, FCGI_STDOUT, FCGI_STDERR, FCGI_DATA):
+            sent = 0
+            content = record.content
+            while sent < content_len:
+                chunk_len = min(0xfff8, content_len - sent)
+                header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, chunk_len, 0)
+                sendall(header + content[sent:sent+chunk_len])
+                sent += chunk_len
+        else:
+            raise ValueError('Content length %d exceeds maximum of %d', content_len, 0xffff)
+  
+    def read_record(self):
+        read_bytes = self.buffered_reader.send
+        
+        try:
+            header = read_bytes(FCGI_RECORD_HEADER_LEN)
+        except PartialRead, x:
+            if x.data:
+                raise
+            return None
+
+        version, record_type, request_id, content_len, padding = header_struct.unpack_from(header)
+
+        if version != FCGI_VERSION:
+            raise ProtocolError('Unsopported FastCGI version %s', version)
+        
+        if content_len:
+            content = read_bytes(content_len)
+        else:
+            content = ''
+        
+        if padding:
+            read_bytes(padding)
+
+        return Record(record_type, content, request_id)
+
+    def __iter__(self):
+        """Generates sequence of records"""
+        return iter(self.read_record, None)
+
+    def close(self):
+        if self._sock:
+            self._sock._sock.close() # gevent.pywsgi.WSGIServer does so
+            self._sock.close()
+            self._sock = None
+
+
 class InputStream(object):
     """
     FCGI_STDIN or FCGI_DATA stream.
-    Uses temporary file to store received data after max_mem octets have been received.
+    Uses temporary file to store received data after max_mem bytes have been received.
     """
 
     _block = frozenset(('read', 'readline', 'readlines', 'fileno', 'close', 'next'))
@@ -182,18 +299,18 @@ class InputStream(object):
         self.complete = Event()
 
     def land(self):
+        """
+        Switch from using in-memory to disk-file storage
+        """
         if not self.landed:
-            pos = self.file.tell()
             tmp_file = TemporaryFile()
             tmp_file.write(self.file.getvalue())
             self.file = tmp_file
-            self.file.seek(pos)
+            self.file.seek(0, 2)
             self.landed = True
-            logger.debug('Stream landed at %s', self.len)
 
     def feed(self, data):
         if not data: # EOF mark
-            logger.debug('InputStream EOF mark received %r', data)
             self.file.seek(0)
             self.complete.set()
             return
@@ -208,7 +325,6 @@ class InputStream(object):
     def __getattr__(self, attr):
         # Block until all data is received
         if attr in self._block:
-            logger.debug('Waiting for InputStream to be received in full')
             self.complete.wait()
             self._flip_attrs()
             return self.__dict__[attr]
@@ -253,114 +369,3 @@ class OutputStream(object):
 
     def __str__(self):
         return 'OutputStream(%s, %s)' % (FCGI_RECORD_TYPES[self.record_type], self.request_id)
-
-
-class BaseConnection(object):
-    """
-    Base class for FastCGI client and server connections.
-    FastCGI wire protocol implementation.
-    """
-
-    def __init__(self, sock, buffer_size=4096, *args, **kwargs):
-        self._sock = sock
-        self.reader = self.reader(buffer_size)
-        self.reader.next()
-
-    def write_record(self, record):
-        sendall = self._sock.sendall
-        content_len = len(record.content)
-        if content_len <= 0xffff:
-            header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, 0)
-            sendall(header + record.content)
-        elif record.type in (FCGI_STDIN, FCGI_STDOUT, FCGI_STDERR, FCGI_DATA):
-            sent = 0
-            content = record.content
-            while sent < content_len:
-                chunk_len = min(0xfff8, content_len - sent)
-                header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, chunk_len, 0)
-                sendall(header + content[sent:sent+chunk_len])
-                sent += chunk_len
-        else:
-            raise ValueError('Content length %d exceeds maximum of %d', content_len, 0xffff)
-  
-    def read_record(self):
-        read = self.reader.send
-        try:
-            header = read(FCGI_RECORD_HEADER_LEN)
-        except socket.error, ex:
-            header = None
-            if ex[0] in (EPIPE, ECONNRESET):
-                sys.exc_clear()
-
-        if not header:
-            logger.debug('Peer closed connection')
-            return None
-
-        version, record_type, request_id, content_len, padding = header_struct.unpack(header)
-        
-        if version != FCGI_VERSION:
-            raise ProtocolError('Unsopported FastCGI version %s', version)
-        
-        try:
-            if content_len:
-                content = read(content_len)
-            else:
-                content = ''
-        
-            if padding:
-                read(padding)
-        except socket.error, ex:
-            logger.exception('Failed to read record from peer')
-            self.close()
-            return None
-
-        return Record(record_type, content, request_id)
-
-    def __iter__(self):
-        return self
-
-    def next(self):
-        record = self.read_record()
-        if record is None:
-            raise StopIteration
-        return record
-
-    def close(self):
-        if self._sock:
-            # self._sock.shutdown(socket.SHUT_RD | socket.SHUT_WR)
-            self._sock._sock.close()
-            self._sock.close()
-            self._sock = None
-            logger.debug('Connection closed')
-
-    def reader(self, buf_size):
-        recv = self._sock.recv
-        buf = ''
-        blen = 0
-        chunks = []
-        requested = (yield)
-        while True:
-            if blen >= requested:
-                data, buf = buf[:requested], buf[requested:]
-                blen -= requested
-            else:
-                while blen < requested:
-                    if buf:
-                        chunks.append(buf)
-                    buf = recv(max(buf_size, requested - blen))
-                    rlen = len(buf)
-                    if not rlen:
-                        break # EOF
-                    blen += rlen
-                blen -= requested
-                if blen:
-                    chunks.append(buf[:-blen])
-                    buf = buf[-blen:]
-                else:
-                    chunks.append(buf)
-                    buf = ''
-                data = ''.join(chunks)
-                chunks = []
-            
-            requested = yield data
-

@@ -33,7 +33,7 @@ __all__ = ('ClientConnection',)
 logger = getLogger(__name__)
 
 
-class ClientConnection(BaseConnection):
+class ClientConnection(Connection):
     """
     FastCGI client connection. Implemented mostly for testing purposes but can be used
     to write FastCGI client.
