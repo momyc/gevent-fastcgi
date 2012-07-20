@@ -18,7 +18,6 @@
 #    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 #    THE SOFTWARE.
 
-
 import os
 import sys
 import logging
@@ -35,7 +34,6 @@ except ImportError:
 from gevent import socket
 from gevent.event import Event
 
-sys.setcheckinterval(1000000)
 
 __all__ = [
     'Record',

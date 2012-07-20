@@ -18,9 +18,10 @@
 #    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 #    THE SOFTWARE.
 
-
+import os
 from wsgiref.handlers import BaseCGIHandler
 from logging import getLogger
+from signal import SIGHUP
 
 from gevent import socket, spawn, joinall
 from gevent.event import Event
@@ -271,6 +272,8 @@ class WSGIServer(StreamServer):
         """
         Up to max_conns Greenlets will be spawned to handle connections
         """
+
+        # StreamServer doesn't know how to use UNIX-sockets?
         if isinstance(bind_address, basestring):
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.bind(bind_address)
@@ -278,6 +281,9 @@ class WSGIServer(StreamServer):
             bind_address = sock
 
         self.buffer_size = int(kwargs.pop('buffer_size', 1024))
+        self.fork = int(kwargs.pop('num_workers', 1))
+        if self.fork <= 0:
+            raise ValueError('num_workers must be equal or greate than 1')
 
         super(WSGIServer, self).__init__(bind_address, self.handle_connection, spawn=max_conns, **kwargs)
 
@@ -304,6 +310,29 @@ class WSGIServer(StreamServer):
                 FCGO_MPXS_CONNS=1,
                 )
 
+    def pre_start(self):
+        super(WSGIServer, self).pre_start()
+        self.workers = []
+        if self.fork > 1:
+            from gevent.monkey import patch_os
+            patch_os()
+
+            for i in range(self.fork):
+                pid = os.fork()
+                if pid < 0:
+                    sys.exit('Failed to fork worker %s', i)
+                if pid == 0:
+                    return
+                self.workers.append(pid)
+
+    def post_stop(self):
+        super(WSGIServer, self).post_stop()
+        for pid in self.workers:
+            os.kill(pid, SIGHUP)
+            os.waitpid(pid, 0)
+        self.workers = []
+
+            
     def handle_connection(self, sock, addr):
         conn = Connection(sock, self.buffer_size)
         handler = ConnectionHandler(self, conn)
@@ -313,10 +342,20 @@ class WSGIServer(StreamServer):
         return self.capabilities.get(name)
 
 
-def run_server(app, conf, host='127.0.0.1', port=5000, path=None, **kwargs):
-    addr = path or (host, int(port))
-    if kwargs.pop('patch_thread', True):
-        from gevent.monkey import patch_thread
-        patch_thread()
+def run_server(app, conf, host='127.0.0.1', port=5000, socket=None, **kwargs):
+    import gevent.monkey
+    from paste.deploy.converters import asbool
+    
+    for name in kwargs.keys():
+        if not name.startswith('gevent.monkey.'):
+            continue
+        if not asbool(kwargs.pop(name)):
+            continue
+        name = name[14:]
+        if name in gevent.monkey.__all__:
+            getattr(gevent.monkey, name)()
+
+    addr = socket or (host, int(port))
+
     WSGIServer(addr, app, **kwargs).serve_forever()
 

@@ -36,8 +36,29 @@ use = egg:gevent_fastcgi#fastcgi
 host = 127.0.0.1
 port = 4000
 # Unix-socket can be used by specifying path instead of host and port
-# path = /path/to/socket
+# socket = /path/to/socket
+
+# The following values are used in reply to Web-server on `FCGI_GET_VALUES` request
+#
+# Maximum allowed simulteneous connections, i.e. the size of greenlet pool used for connection handlers.
 max_conns = 1024
+#
+# Does not limit anything on FastCGI server side. Just a clue to Web-server on how many simulteneous requests
+# can be handled by FastCGI server. This can be much higher than `max_conns` thanks to FastCGI connection multiplexing
+max_reqs = 1024000
+
+# Fork up to `num_workers` child processes after socket is bound.
+# Must be equal or greate than 1. No children will be actually forked if set to 1 or omitted.
+num_workers = 4
+
+# Call specified functions of gevent.monkey module before starting the server
+#gevent.monkey.patch_os = yes
+#gevent.monkey.patch_thread = yes
+#gevent.monkey.patch_time = yes
+#gevent.monkey.patch_socket = yes
+#gevent.monkey.patch_ssl = yes
+# or
+#gevent.monkey.patch_all = yes
 ...
 ```
 ### Django
