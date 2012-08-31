@@ -19,163 +19,59 @@
 #    THE SOFTWARE.
 
 import os
+import logging
+from zope.interface import implements
 from wsgiref.handlers import BaseCGIHandler
-from logging import getLogger
-from signal import SIGHUP
 
 from gevent import socket, spawn, joinall
-from gevent.event import Event
 from gevent.server import StreamServer
+from gevent.coros import RLock
 
+from gevent_fastcgi.interfaces import IServer
 from gevent_fastcgi.base import *
 
 
-__all__ = ('run_server', 'WSGIServer')
+logger = logging.getLogger(__name__)
 
-
-logger = getLogger(__name__)
-
-
-FCGI_ROLES = {FCGI_RESPONDER: 'RESPONDER', FCGI_AUTHORIZER: 'AUTHORIZER', FCGI_FILTER: 'FILTER'}
 
 EXISTING_REQUEST_REC_TYPES = frozenset((
     FCGI_STDIN,
+    FCGI_DATA,
     FCGI_PARAMS,
     FCGI_ABORT_REQUEST,
     ))
 
-MANDATORY_WSGI_ENVIRON_VARS = frozenset((
-    'REQUEST_METHOD',
-    'SCRIPT_NAME',
-    'PATH_INFO',
-    'QUERY_STRING',
-    'CONTENT_TYPE',
-    'CONTENT_LENGTH',
-    'SERVER_NAME',
-    'SERVER_PORT',
-    'SERVER_PROTOCOL',
-    ))
-
-
-class Response(object):
-
-    def __init__(self, status, headers):
-        self.status = status
-        self.headers = [(name.lower(), value) for name, value in headers]
-        self.headers_sent = False
-
 
 class Request(object):
-    """
-    FastCGI request representation for FastCGI connection multiplexing feature.
-    """
-    def __init__(self, conn, id, role, flags):
-        self.id = id
-        self.role = role
-        self.flags = flags
-        self.environ = []
-        self.stdout = OutputStream(conn, id, FCGI_STDOUT)
-        self.stderr = OutputStream(conn, id, FCGI_STDERR)
-        self.response = None
+    
+    def __init__(self, conn, request_id):
+        self.conn = conn
+        self.id = request_id
+        self.stdin = InputStream()
+        self.stdout = OutputStream(conn, request_id, FCGI_STDOUT)
+        self.stderr = OutputStream(conn, request_id, FCGI_STDERR)
+        self.environ_list = []
+        self.environ = {}
+        self.greenlet = None
 
-    def run_app(self, application):
-        environ = self._make_environ()
-        response = application(environ, self._start_response)
-        
-        write = self.stdout.write
-        
-        # do nothing until first non-empty chunk
-        for chunk in response:
-            if chunk:
-                self._send_headers()
-                write(chunk)
-                break
-        
-        map(write, response)
-
-        if not self.response.headers_sent:
-            self._send_headers()
-
-        self.stdout.close()
-        self.stderr.close()
-
-        close = getattr(response, 'close', None)
-        if close is not None:
-            close()
-
-    def _make_environ(self):
-        env = self.environ
-        
-        for name in MANDATORY_WSGI_ENVIRON_VARS.difference(env):
-            env[name] = ''
-
-        env['wsgi.version'] = (1, 0)
-        env['wsgi.input'] = self.stdin
-        env['wsgi.errors'] = self.stderr
-        env['wsgi.multithread'] = True # the same application may be simulteneously invoked in the same process
-        env['wsgi.multiprocess'] = False
-        env['wsgi.run_once'] = False
-
-        https = env.get('HTTPS','').lower()
-        if https in ('yes', 'on', '1'):
-            env['wsgi.url_scheme'] = 'https'
-        else:
-            env['wsgi.url_scheme'] = 'http'
-
-        return env
-
-    def _start_response(self, status, headers, exc_info=None):
-        if exc_info is not None:
-            try:
-                if self.status:
-                    raise exc_info[1].with_traceback(exc_info[2])
-            finally:
-                exc_info = None
-
-        assert self.response is None, 'start_response called more than once'
-
-        self.response = Response(status, headers)
-
-        return self._write_from_app
-
-    def _send_headers(self):
-        data = ['Status: %s' % self.response.status]
-        data.extend('%s: %s' % hdr for hdr in self.response.headers)
-        data.append('\r\n')
-        self.stdout.write('\r\n'.join(data))
-        self.response.headers_sent = True
-
-    def _write_from_app(self, chunk):
-        if not chunk:
-            return
-        if not self.response.headers_sent:
-            self._send_headers()
-        self.stdout.write(chunk)
+    def run(self, app):
+        handler = BaseCGIHandler(self.stdin, self.stdout, self.stderr, self.environ)
+        handler.run(app)
 
 
 class ServerConnection(Connection):
 
     def __init__(self, *args, **kw):
         super(ServerConnection, self).__init__(*args, **kw)
-        self.busy = False
-        self.ready = Event()
-
-    def __enter__(self):
-        while self.busy:
-            self.ready.wait()
-        self.busy = True
-        self.ready.clear()
-
-    def __exit__(self, type, value, tb):
-        self.busy = False
-        self.ready.set()
+        self.lock = RLock()
 
     def write_record(self, record):
-        with self:
+        # We must serialize access for possible multiple request greenlets 
+        with self.lock:
             super(ServerConnection, self).write_record(record)
 
     def close(self):
-        with self:
+        with self.lock:
             super(ServerConnection, self).close()
 
 
@@ -185,50 +81,44 @@ class ConnectionHandler(object):
         self.server = server
         self.conn = conn
         self.requests = {}
+        self.keep_conn = False
 
     def reply(self, record_type, content='', request_id=FCGI_NULL_REQUEST_ID):
         self.conn.write_record(Record(record_type, content, request_id))
 
     def run_app(self, request):
         try:
-            #handler = BaseCGIHandler(request.stdin, request.stdout, request.stderr, request.environ)
-            #handler.run(self.server.app)
-            #request.stdout.close()
-            #request.stderr.close()
-            request.run_app(self.server.app)
+            request.run(self.server.app)
         finally:
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
             del self.requests[request.id]
-            if not self.requests and (request.flags & FCGI_KEEP_CONN == 0):
+            if not self.requests and not self.keep_conn:
                 self.conn.close()
 
     def fcgi_begin_request(self, record):
         role, flags = begin_request_struct.unpack(record.content)
-        if role == self.server.role:
-            request = Request(self.conn, record.request_id, role, flags)
-            if role == FCGI_RESPONDER:
-                request.stdin = InputStream()
-            elif role == FCGI_FILTER:
-                request.stdin = InputStream()
-                request.data = InputStream()
-            self.requests[request.id] = request
-        else:
+        if role != self.server.role:
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0,  FCGI_UNKNOWN_ROLE), record.request_id)
             logger.error('Unknown request role %s', role)
+        else:
+            self.keep_conn = bool(FCGI_KEEP_CONN & flags)
+            request = Request(self.conn, record.request_id)
+            if role == FCGI_FILTER:
+                request.data = InputStream()
+            self.requests[request.id] = request
 
     def fcgi_params(self, record, request):
         if record.content:
-            request.environ.append(record.content)
+            request.environ_list.append(record.content)
         else:
-            request.environ = dict(unpack_pairs(''.join(request.environ)))
+            request.environ.update(unpack_pairs(''.join(request.environ)))
             request.greenlet = spawn(self.run_app, request)
 
     def fcgi_abort_request(self, record, request):
         if request.greenlet:
             request.greenlet.kill()
-            request.greenlet = None
-        self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
-        del self.requests[request.id]
+        else:
+            del self.requests[request.id]
 
     def fcgi_get_values(self, record):
         pairs = ((name, self.server.capability(name)) for name, _ in unpack_pairs(record.content))
@@ -240,11 +130,13 @@ class ConnectionHandler(object):
         """
         requests = self.requests
 
-        for record in self.conn:
+        for record in iter(self.conn.read_record, None):
             if record.type in EXISTING_REQUEST_REC_TYPES:
                 request = requests.get(record.request_id)
                 if not request:
-                    raise ProtocolError('%s for non-existing request' % record)
+                    logger.error('Non-existent request in %s. Closing connection!' % record)
+                    self.conn.close()
+                    break
                 if record.type == FCGI_STDIN:
                     request.stdin.feed(record.content)
                 elif record.type == FCGI_DATA:
@@ -252,7 +144,8 @@ class ConnectionHandler(object):
                 elif record.type == FCGI_PARAMS:
                     self.fcgi_params(record, request)
                 elif record.type == FCGI_ABORT_REQUEST:
-                    self.fcgi_abort_request(request)
+                    logger.warn('Request abortion requested by server')
+                    self.fcgi_abort_request(record, request)
             elif record.type == FCGI_BEGIN_REQUEST:
                 self.fcgi_begin_request(record)
             elif record.type == FCGI_GET_VALUES:
@@ -263,18 +156,23 @@ class ConnectionHandler(object):
                 self.conn.close()
                 break
 
-        joinall([request.greenlet for request in requests.values()])
+        wait_list = [request.greenlet for request in requests.values() if request.greenlet is not None]
+        if wait_list:
+            joinall(wait_list)
 
 
 class WSGIServer(StreamServer):
 
-    def __init__(self, bind_address, app, max_conns=1024, max_reqs=1024 * 1024, multiplex=True, **kwargs):
+    implements(IServer)
+
+    def __init__(self, bind_address, app, max_conns=1024, max_reqs=1024 * 1024, **kwargs):
         """
         Up to max_conns Greenlets will be spawned to handle connections
         """
 
         # StreamServer doesn't know how to use UNIX-sockets?
         if isinstance(bind_address, basestring):
+            self._socket_file = bind_address
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.bind(bind_address)
             sock.listen(max_conns)
@@ -290,7 +188,7 @@ class WSGIServer(StreamServer):
         if 'role' in kwargs:
             role = kwargs['role']
             if isinstance(role, basestring):
-                role = role.lower().trim()
+                role = role.lower().strip()
                 if role == 'responder':
                     role = FCGI_RESPONDER
                 elif role == 'filter':
@@ -299,25 +197,29 @@ class WSGIServer(StreamServer):
                     role = FCGI_AUTHORIZER
                 else:
                     raise ValueError('Unknown FastCGI role %s', role)
+            else:
+                role = int(role)
+                if role not in (FCGI_RESPONDER, FCGI_FILTER, FCGI_AUTHORIZER):
+                    raise ValueError('Unknown FastCGI role %s', role)
         else:
             role = FCGI_RESPONDER
         
         self.role = role
         self.app = app
         self.capabilities = dict(
-                FCGI_MAX_CONNS=max_conns,
-                FCGI_MAX_REQS=max_reqs,
-                FCGO_MPXS_CONNS=1,
+                FCGI_MAX_CONNS=str(max_conns),
+                FCGI_MAX_REQS=str(max_reqs),
+                FCGI_MPXS_CONNS='1',
                 )
+        self.workers = []
 
     def pre_start(self):
         super(WSGIServer, self).pre_start()
-        self.workers = []
         if self.fork > 1:
             from gevent.monkey import patch_os
             patch_os()
 
-            for i in range(self.fork):
+            for i in range(self.fork): # pragma: no cover
                 pid = os.fork()
                 if pid < 0:
                     sys.exit('Failed to fork worker %s', i)
@@ -327,35 +229,25 @@ class WSGIServer(StreamServer):
 
     def post_stop(self):
         super(WSGIServer, self).post_stop()
+        self._cleanup()
+            
+    def handle_connection(self, sock, addr):
+        sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        conn = ServerConnection(sock, self.buffer_size)
+        handler = ConnectionHandler(self, conn)
+        handler.run()
+
+    def capability(self, name):
+        return self.capabilities.get(name, '')
+
+    def _cleanup(self):
+        from signal import SIGHUP
+
         for pid in self.workers:
             os.kill(pid, SIGHUP)
             os.waitpid(pid, 0)
         self.workers = []
 
-            
-    def handle_connection(self, sock, addr):
-        conn = Connection(sock, self.buffer_size)
-        handler = ConnectionHandler(self, conn)
-        handler.run()
-
-    def capability(self, name):
-        return self.capabilities.get(name)
-
-
-def run_server(app, conf, host='127.0.0.1', port=5000, socket=None, **kwargs):
-    import gevent.monkey
-    from paste.deploy.converters import asbool
-    
-    for name in kwargs.keys():
-        if not name.startswith('gevent.monkey.'):
-            continue
-        if not asbool(kwargs.pop(name)):
-            continue
-        name = name[14:]
-        if name in gevent.monkey.__all__:
-            getattr(gevent.monkey, name)()
-
-    addr = socket or (host, int(port))
-
-    WSGIServer(addr, app, **kwargs).serve_forever()
-
+        if hasattr(self, '_socket_file'):
+            os.unlink(self._socket_file)
+            del self._socket_file

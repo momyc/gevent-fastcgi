@@ -25,31 +25,18 @@ from errno import EPIPE, ECONNRESET
 from tempfile import TemporaryFile
 import struct
 from decorator import decorator
+from zope.interface import implements
 
 try:
     from cStringIO import StringIO
-except ImportError:
+except ImportError: # pragma: no cover
     from StringIO import StringIO
 
 from gevent import socket
 from gevent.event import Event
 
-
-__all__ = [
-    'Record',
-    'Connection',
-    'ProtocolError',
-    'InputStream',
-    'OutputStream',
-    'pack_pairs',
-    'unpack_pairs',
-    'header_struct',
-    'begin_request_struct',
-    'end_request_struct',
-    'unknown_type_struct',
-    'coroutine',
-    'buffered_reader',
-    ]
+from gevent_fastcgi.interfaces import IRecord, IConnection
+from gevent_fastcgi.utils import pack_pairs, unpack_pairs, PartialRead, BufferedReader
 
 
 FCGI_VERSION = 1
@@ -95,8 +82,6 @@ FCGI_MAX_CONNS = 'FCGI_MAX_CONNS'
 FCGI_MAX_REQS = 'FCGI_MAX_REQS'
 FCGI_MPXS_CONNS = 'FCGI_MPXS_CONNS'
 
-__all__.extend(name for name in locals().keys() if name.upper() == name)
-
 header_struct = struct.Struct('!BBHHBx')
 begin_request_struct = struct.Struct('!HB5x')
 end_request_struct = struct.Struct('!LB3x')
@@ -104,129 +89,33 @@ unknown_type_struct = struct.Struct('!B7x')
 
 logger = logging.getLogger(__name__)
 
-try:
-    from gevent_fastcgi.speedups import pack_pair, unpack_pairs
-except ImportError:
-
-    length_struct = struct.Struct('!L')
-
-    def pack_len(s):
-        l = len(s)
-        if l < 128:
-            return chr(l)
-        elif l > 0x7fffffff:
-            raise ValueError('Maximum name or value length is %d', 0x7fffffff)
-        return length_struct.pack(l | 0x80000000)
-
-    def pack_pair(name, value):
-        return ''.join((pack_len(name), pack_len(value), name, value))
-
-    def unpack_len(buf, pos):
-        _len = ord(buf[pos])
-        if _len & 128:
-            _len = length_struct.unpack_from(buf, pos)[0] & 0x7fffffff
-            pos += 4
-        else:
-            pos += 1
-        return _len, pos
-
-    def unpack_pairs(data):
-        end = len(data)
-        pos = 0
-        while pos < end:
-            try:
-                name_len, pos = unpack_len(data, pos)
-                value_len, pos = unpack_len(data, pos)
-                name = data[pos:pos + name_len]
-                pos += name_len
-                value = data[pos:pos + value_len]
-                pos += value_len
-                yield name, value
-            except (IndexError, struct.error):
-                raise ProtocolError('Failed to unpack name/value pairs')
-
-def pack_pairs(pairs):
-    if isinstance(pairs, dict):
-        pairs = pairs.iteritems()
-
-    return ''.join(pack_pair(name, value) for name, value in pairs)
-
-@decorator
-def coroutine(func, *args, **kw):
-    result = func(*args, **kw)
-    result.next()
-    return result
-
-@coroutine
-def buffered_reader(read, buf_size):
-    """
-    Coroutine that yields exact number of bytes requested. Uses buffers for performance
-    """
-    buf = ''
-    blen = 0
-    chunks = []
-    requested = (yield)
-    while True:
-        if blen >= requested:
-            data, buf = buf[:requested], buf[requested:]
-            blen -= requested
-        else:
-            while blen < requested:
-                chunks.append(buf)
-                try:
-                    buf = read(buf_size)
-                    rlen = len(buf)
-                except socket.error, x:
-                    rlen = 0
-                if not rlen:
-                    raise PartialRead(requested, ''.join(chunks))
-                blen += rlen
-            blen -= requested
-            if blen:
-                chunks.append(buf[:-blen])
-                buf = buf[-blen:]
-            else:
-                chunks.append(buf)
-                buf = ''
-            data = ''.join(chunks)
-            chunks = []
-        
-        requested = yield data
-
-
-class PartialRead(Exception):
-    """
-    Raised by buffered_reader when it fails to read requested length of data
-    """
-    def __init__(self, expected, data):
-        super(PartialRead, self).__init__('Expected %s but received %s bytes only', expected, len(data))
-        self.expected = expected
-        self.data = data
-
-
-class ProtocolError(Exception):
-    pass
-
 
 class Record(object):
+    
+    implements(IRecord)
     __slots__ = ('type', 'content', 'request_id')
 
     def __init__(self, type, content='', request_id=FCGI_NULL_REQUEST_ID):
+        if type < 0 or type > 255:
+            raise ValueError('Record type must be between 0 and 255')
         self.type = type
         self.content = content
         self.request_id = request_id
 
-    def __str__(self):
+    def __str__(self): # pragma: no cover
         return '<Record %s, req id %s, %d bytes>' % (FCGI_RECORD_TYPES.get(self.type, self.type), self.request_id, len(self.content))
+
+    def __eq__(self, other):
+        return isinstance(other, Record) and (self.type == other.type) and (self.request_id == other.request_id) and (self.content == other.content)
 
 
 class Connection(object):
-    """
-    FastCGI wire protocol implementation
-    """
+    
+    implements(IConnection)
+    
     def __init__(self, sock, buffer_size=4096):
         self._sock = sock
-        self.buffered_reader = buffered_reader(sock.recv, buffer_size)
+        self.buffered_reader = BufferedReader(sock.recv, buffer_size)
 
     def write_record(self, record):
         sendall = self._sock.sendall
@@ -246,37 +135,29 @@ class Connection(object):
             raise ValueError('Content length %d exceeds maximum of %d', content_len, 0xffff)
   
     def read_record(self):
-        read_bytes = self.buffered_reader.send
+        read_bytes = self.buffered_reader.read_bytes
         
         try:
             header = read_bytes(FCGI_RECORD_HEADER_LEN)
         except PartialRead, x:
-            if x.data:
+            if x.partial_data:
                 raise
             return None
 
         version, record_type, request_id, content_len, padding = header_struct.unpack_from(header)
 
-        if version != FCGI_VERSION:
-            raise ProtocolError('Unsopported FastCGI version %s', version)
-        
         if content_len:
             content = read_bytes(content_len)
         else:
             content = ''
         
-        if padding:
+        if padding: # pragma: no cover
             read_bytes(padding)
 
         return Record(record_type, content, request_id)
 
-    def __iter__(self):
-        """Generates sequence of records"""
-        return iter(self.read_record, None)
-
     def close(self):
         if self._sock:
-            self._sock._sock.close() # gevent.pywsgi.WSGIServer does so
             self._sock.close()
             self._sock = None
 
@@ -317,9 +198,6 @@ class InputStream(object):
             self.land()
         self.file.write(data)
 
-    def __iter__(self):
-        return self.file
-
     def __getattr__(self, attr):
         # Block until all data is received
         if attr in self._block:
@@ -346,19 +224,19 @@ class OutputStream(object):
 
     def write(self, data):
         if self.closed:
-            logger.warn('Write to closed %s', self)
-            return
+            raise socket.error(9, 'File is already closed')
 
         if not data:
             return
 
-        if self.record_type == FCGI_STDERR:
-            sys.stderr.write(data)
+        #if self.record_type == FCGI_STDERR:
+        #    sys.stderr.write(data)
         
         self.conn.write_record(Record(self.record_type, data, self.request_id))
 
-    def flush(self):
-        pass
+    def flush(self): # pragma: no cover
+        if self.closed:
+            raise socket.error(9, 'File is already closed')
 
     def close(self):
         if not self.closed:

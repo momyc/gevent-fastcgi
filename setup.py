@@ -3,7 +3,7 @@ from setuptools import setup, Extension, find_packages
 
 setup(
     name='gevent-fastcgi',
-    version='0.1.10dev',
+    version='0.1.11dev',
     description='FastCGI/WSGI client and server implemented using gevent library',
     long_description='''
     FastCGI/WSGI server implementation using gevent library. No need to monkeypatch and
@@ -23,7 +23,7 @@ setup(
         "gevent>=0.13.6"
     ],
     entry_points={
-       'paste.server_runner': ['fastcgi = gevent_fastcgi.server:run_server'],
+       'paste.server_runner': ['fastcgi = gevent_fastcgi.adapters.paste_deploy:run_server'],
     },
     test_suite="gevent_fastcgi.test",
     ext_modules=[Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c'])],
