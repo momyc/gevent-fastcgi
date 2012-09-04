@@ -70,10 +70,6 @@ class ServerConnection(Connection):
         with self.lock:
             super(ServerConnection, self).write_record(record)
 
-    def close(self):
-        with self.lock:
-            super(ServerConnection, self).close()
-
 
 class ConnectionHandler(object):
 
@@ -89,8 +85,10 @@ class ConnectionHandler(object):
     def run_app(self, request):
         try:
             request.run(self.server.app)
-        finally:
+            request.stdout.close()
+            request.stderr.close()
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
+        finally:
             del self.requests[request.id]
             if not self.requests and not self.keep_conn:
                 self.conn.close()
@@ -99,7 +97,7 @@ class ConnectionHandler(object):
         role, flags = begin_request_struct.unpack(record.content)
         if role != self.server.role:
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0,  FCGI_UNKNOWN_ROLE), record.request_id)
-            logger.error('Unknown request role %s', role)
+            logger.error('Request role is %s but server is configured with %s', role, self.server.role)
         else:
             self.keep_conn = bool(FCGI_KEEP_CONN & flags)
             request = Request(self.conn, record.request_id)
@@ -115,7 +113,7 @@ class ConnectionHandler(object):
             request.greenlet = spawn(self.run_app, request)
 
     def fcgi_abort_request(self, record, request):
-        if request.greenlet:
+        if request.greenlet is not None:
             request.greenlet.kill()
         else:
             del self.requests[request.id]
@@ -182,27 +180,24 @@ class WSGIServer(StreamServer):
         self.fork = int(kwargs.pop('num_workers', 1))
         if self.fork <= 0:
             raise ValueError('num_workers must be equal or greate than 1')
+        role = kwargs.pop('role', FCGI_RESPONDER)
 
         super(WSGIServer, self).__init__(bind_address, self.handle_connection, spawn=max_conns, **kwargs)
 
-        if 'role' in kwargs:
-            role = kwargs['role']
-            if isinstance(role, basestring):
-                role = role.lower().strip()
-                if role == 'responder':
-                    role = FCGI_RESPONDER
-                elif role == 'filter':
-                    role = FCGI_FILTER
-                elif role == 'authorizer':
-                    role = FCGI_AUTHORIZER
-                else:
-                    raise ValueError('Unknown FastCGI role %s', role)
+        if isinstance(role, basestring):
+            role = role.lower().strip()
+            if role == 'responder':
+                role = FCGI_RESPONDER
+            elif role == 'filter':
+                role = FCGI_FILTER
+            elif role == 'authorizer':
+                role = FCGI_AUTHORIZER
             else:
-                role = int(role)
-                if role not in (FCGI_RESPONDER, FCGI_FILTER, FCGI_AUTHORIZER):
-                    raise ValueError('Unknown FastCGI role %s', role)
+                raise ValueError('Unknown FastCGI role %s', role)
         else:
-            role = FCGI_RESPONDER
+            role = int(role)
+            if role not in (FCGI_RESPONDER, FCGI_FILTER, FCGI_AUTHORIZER):
+                raise ValueError('Unknown FastCGI role %s', role)
         
         self.role = role
         self.app = app
