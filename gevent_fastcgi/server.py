@@ -109,7 +109,7 @@ class ConnectionHandler(object):
         if record.content:
             request.environ_list.append(record.content)
         else:
-            request.environ.update(unpack_pairs(''.join(request.environ)))
+            request.environ.update(unpack_pairs(''.join(request.environ_list)))
             request.greenlet = spawn(self.run_app, request)
 
     def fcgi_abort_request(self, record, request):
