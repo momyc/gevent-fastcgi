@@ -24,7 +24,6 @@ import logging
 from errno import EPIPE, ECONNRESET
 from tempfile import TemporaryFile
 import struct
-from decorator import decorator
 from zope.interface import implements
 
 try:
@@ -38,6 +37,8 @@ from gevent.event import Event
 from gevent_fastcgi.interfaces import IRecord, IConnection
 from gevent_fastcgi.utils import pack_pairs, unpack_pairs, PartialRead, BufferedReader
 
+
+logger = logging.getLogger('gevent_fastcgi')
 
 FCGI_VERSION = 1
 FCGI_LISTENSOCK_FILENO = 0
@@ -102,7 +103,7 @@ class Record(object):
         self.content = content
         self.request_id = request_id
 
-    def __str__(self): # pragma: no cover
+    def __str__(self):
         return '<Record %s, req id %s, %d bytes>' % (FCGI_RECORD_TYPES.get(self.type, self.type), self.request_id, len(self.content))
 
     def __eq__(self, other):
@@ -132,7 +133,9 @@ class Connection(object):
                 sendall(header + content[sent:sent+chunk_len])
                 sent += chunk_len
         else:
-            raise ValueError('Content length %d exceeds maximum of %d', content_len, 0xffff)
+            msg = 'Record content length %s exceeds maximum of %d' % (content_len, 0xffff)
+            logger.error(msg)
+            raise ValueError(msg)
   
     def read_record(self):
         read_bytes = self.buffered_reader.read_bytes
@@ -140,7 +143,9 @@ class Connection(object):
         try:
             header = read_bytes(FCGI_RECORD_HEADER_LEN)
         except PartialRead, x:
+            # it's only an error if connection was closed after some data has been already sent
             if x.partial_data:
+                logger.exception('Partial header received: %s' % x)
                 raise
             return None
 
@@ -229,10 +234,13 @@ class OutputStream(object):
         if not data:
             return
 
-        #if self.record_type == FCGI_STDERR:
-        #    sys.stderr.write(data)
-        
+        if self.record_type == FCGI_STDERR:
+            sys.stderr.write(data)
+
         self.conn.write_record(Record(self.record_type, data, self.request_id))
+
+    def writelines(self, lines):
+        map(self.write, lines)
 
     def flush(self): # pragma: no cover
         if self.closed:
