@@ -167,8 +167,6 @@ class WSGIServer(StreamServer):
         """
         Up to max_conns Greenlets will be spawned to handle connections
         """
-
-        # StreamServer doesn't know how to use UNIX-sockets?
         if isinstance(bind_address, basestring):
             self._socket_file = bind_address
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -208,22 +206,22 @@ class WSGIServer(StreamServer):
                 )
         self.workers = []
 
-    def pre_start(self):
-        super(WSGIServer, self).pre_start()
+    def start(self):
+        super(WSGIServer, self).start()
         if self.fork > 1:
             from gevent.monkey import patch_os
             patch_os()
 
-            for i in range(self.fork): # pragma: no cover
+            for i in range(self.fork):
                 pid = os.fork()
-                if pid < 0:
+                if pid < 0: # pragma: no cover
                     sys.exit('Failed to fork worker %s', i)
                 if pid == 0:
-                    return
+                    return # pragma: no cover
                 self.workers.append(pid)
 
-    def post_stop(self):
-        super(WSGIServer, self).post_stop()
+    def stop(self):
+        super(WSGIServer, self).stop()
         self._cleanup()
             
     def handle_connection(self, sock, addr):
