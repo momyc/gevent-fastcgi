@@ -225,7 +225,8 @@ class WSGIServer(StreamServer):
         self._cleanup()
             
     def handle_connection(self, sock, addr):
-        sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        if sock.family in (socket.AF_INET, socket.AF_INET6):
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         conn = ServerConnection(sock, self.buffer_size)
         handler = ConnectionHandler(self, conn)
         handler.run()
