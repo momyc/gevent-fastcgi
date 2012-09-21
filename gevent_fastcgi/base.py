@@ -18,6 +18,7 @@
 #    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 #    THE SOFTWARE.
 
+from __future__ import with_statement
 import os
 import sys
 import logging
@@ -143,10 +144,10 @@ class Connection(object):
         try:
             header = read_bytes(FCGI_RECORD_HEADER_LEN)
         except PartialRead, x:
-            # it's only an error if connection was closed after some data has been already sent
-            if x.partial_data:
+            if x.partial_data: # pragma: no cover - for some reason these two lines claimed as not covered
                 logger.exception('Partial header received: %s' % x)
                 raise
+            # No error here. Remote side closed connection after sending all records
             return None
 
         version, record_type, request_id, content_len, padding = header_struct.unpack_from(header)
@@ -165,6 +166,12 @@ class Connection(object):
         if self._sock:
             self._sock.close()
             self._sock = None
+
+    def done_writing(self):
+        self._sock.shutdown(socket.SHUT_WR)
+
+    def __iter__(self):
+        return iter(self.read_record, None)
 
 
 class InputStream(object):
@@ -202,6 +209,11 @@ class InputStream(object):
         if not self.landed and self.len > self.max_mem:
             self.land()
         self.file.write(data)
+
+    def __iter__(self): # pragma: no cover
+        self.complete.wait()
+        self.__iter__ = self.file.__iter__
+        return self.__iter__
 
     def __getattr__(self, attr):
         # Block until all data is received
@@ -242,9 +254,8 @@ class OutputStream(object):
     def writelines(self, lines):
         map(self.write, lines)
 
-    def flush(self): # pragma: no cover
-        if self.closed:
-            raise socket.error(9, 'File is already closed')
+    def flush(self):
+        pass
 
     def close(self):
         if not self.closed:
