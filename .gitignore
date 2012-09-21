@@ -3,3 +3,5 @@
 build
 dist
 gevent_fastcgi.egg-info
+*.log
+.coverage
