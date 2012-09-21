@@ -2,7 +2,9 @@ import unittest
 import string
 from random import randint
 
+from gevent_fastcgi.base import *
 from gevent_fastcgi.utils import pack_pairs, unpack_pairs, BufferedReader, PartialRead
+from gevent_fastcgi.test.utils import MockSocket
 
 
 class PackingTests(unittest.TestCase):
@@ -33,3 +35,10 @@ class BufferedReaderTests(unittest.TestCase):
         reader = BufferedReader(get_next_chunk, 16)
 
         self.assertEqual('s' * 77, reader.read_bytes(77))
+
+    def test_partial_read(self):
+        sock = MockSocket('12345') # less than 8 bytes (record header size)
+        conn = Connection(sock)
+        with self.assertRaises(PartialRead):
+            conn.read_record()
+

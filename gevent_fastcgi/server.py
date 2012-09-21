@@ -18,12 +18,14 @@
 #    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 #    THE SOFTWARE.
 
+from __future__ import with_statement
 import os
 import logging
 from zope.interface import implements
 from wsgiref.handlers import BaseCGIHandler
+# from gevent_fastcgi.wsgi import Request
 
-from gevent import socket, spawn, joinall
+from gevent import socket, spawn, joinall, sleep
 from gevent.server import StreamServer
 from gevent.coros import RLock
 
@@ -111,9 +113,14 @@ class ConnectionHandler(object):
         else:
             request.environ.update(unpack_pairs(''.join(request.environ_list)))
             request.greenlet = spawn(self.run_app, request)
+            # Probably a bug in gevent
+            # Without this killing greenlet blocks forever
+            sleep(0)
 
     def fcgi_abort_request(self, record, request):
-        if request.greenlet is not None:
+        logger.warn('Request %s abortion' % request.id)
+        greenlet = request.greenlet
+        if greenlet is not None and greenlet.started:
             request.greenlet.kill()
         else:
             del self.requests[request.id]
@@ -128,21 +135,20 @@ class ConnectionHandler(object):
         """
         requests = self.requests
 
-        for record in iter(self.conn.read_record, None):
+        for record in self.conn:
             if record.type in EXISTING_REQUEST_REC_TYPES:
                 request = requests.get(record.request_id)
                 if not request:
                     logger.error('Non-existent request in %s. Closing connection!' % record)
                     self.conn.close()
                     break
-                if record.type == FCGI_STDIN:
+                if record.type == FCGI_STDIN: # pragma: no cover - for some reason this reported to be not covered
                     request.stdin.feed(record.content)
-                elif record.type == FCGI_DATA:
+                elif record.type == FCGI_DATA: # pragma: no cover - for some reason this reported to be not covered
                     request.data.feed(record.content)
                 elif record.type == FCGI_PARAMS:
                     self.fcgi_params(record, request)
                 elif record.type == FCGI_ABORT_REQUEST:
-                    logger.warn('Request abortion requested by server')
                     self.fcgi_abort_request(record, request)
             elif record.type == FCGI_BEGIN_REQUEST:
                 self.fcgi_begin_request(record)
@@ -156,7 +162,7 @@ class ConnectionHandler(object):
 
         wait_list = [request.greenlet for request in requests.values() if request.greenlet is not None]
         if wait_list:
-            joinall(wait_list)
+            joinall(wait_list) # pragma: no cover - for some reason this reported to be not covered
 
 
 class WSGIServer(StreamServer):
@@ -238,8 +244,12 @@ class WSGIServer(StreamServer):
         from signal import SIGHUP
 
         for pid in self.workers:
-            os.kill(pid, SIGHUP)
-            os.waitpid(pid, 0)
+            try:
+                os.kill(pid, SIGHUP)
+                os.waitpid(pid, 0)
+            except OSError: # pragma: no cover
+                logging.exception('Problem killing worker with PID %s' % pid)
+
         self.workers = []
 
         if hasattr(self, '_socket_file'):

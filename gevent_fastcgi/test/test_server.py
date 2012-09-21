@@ -1,182 +1,262 @@
+import os
 import unittest
 
-from gevent_fastcgi.base import *
-from gevent_fastcgi.server import WSGIServer, ServerConnection
-from gevent_fastcgi.test.utils import MockSocket
+from gevent_fastcgi.base import (
+    FCGI_RESPONDER,
+    FCGI_FILTER,
+    FCGI_AUTHORIZER,
+    FCGI_BEGIN_REQUEST,
+    FCGI_END_REQUEST,
+    FCGI_ABORT_REQUEST,
+    FCGI_PARAMS,
+    FCGI_STDIN,
+    FCGI_STDOUT,
+    FCGI_STDERR,
+    FCGI_DATA,
+    FCGI_GET_VALUES,
+    FCGI_GET_VALUES_RESULT,
+    FCGI_REQUEST_COMPLETE,
+    FCGI_KEEP_CONN,
+    FCGI_UNKNOWN_TYPE,
+    FCGI_UNKNOWN_ROLE,
+    FCGI_MAX_CONNS,
+    FCGI_MAX_REQS,
+    FCGI_MPXS_CONNS,
+    Record,
+    begin_request_struct,
+    end_request_struct,
+    pack_pairs,
+    unpack_pairs,
+)
+
+from gevent_fastcgi.test.utils import (
+    app,
+    slow_app,
+    echo_app,
+    pack_env,
+    make_server,
+    make_connection,
+    make_server_conn,
+)
 
 
-ADDRESS = ('127.0.0.1', 18374)
+ADDRESS = ('127.0.0.1', 49281)
 DATA = ''.join(map(chr, range(256))) * 1024
-ENVIRON = {
-        'SCRIPT_NAME': '',
-        'PATH_INFO': '/',
-        'REQUEST_METHOD': 'GET',
-        'QUERY_STRING': '',
-        'CONTENT_TYPE': 'text/plain',
-        'SERVER_NAME': '127.0.0.1',
-        'SERVER_PORT': '80',
-        'SERVER_PROTOCOL': 'HTTP/1.0',
-        }
-
-def pack_env(**kw):
-    env = dict(ENVIRON)
-    env.update(kw)
-    return pack_pairs(env)
-
-def app(environ, start_response):
-    start_response('200 OK', [])
-    return ['OK']
-
-def slow_app(environ, start_response):
-    from gevent import sleep
-
-    start_response('200 OK', [])
-    sleep(0.5)
-    return ['OK']
-
-def echo_app(environ, start_response):
-    start_response('200 OK', [])
-    data = environ['wsgi.input'].read()
-    write(data)
-    return [data]
 
 
 class ServerTests(unittest.TestCase):
 
     def test_address(self):
-        for address in [('127.0.0.1', 47231), 'socket']:
-            self.start_server(address).stop()
+        unix_socket = 'socket.%s-%s' % (os.getppid(), os.getpid())
+        for address in [('127.0.0.1', 47231), unix_socket]:
+            with make_server_conn(address) as conn:
+                self._run_get_values(conn)
+            if address == unix_socket:
+                self.assertFalse(os.path.exists(address))
 
     def test_role(self):
         for role in ('responder', 'ResPonDer', 'filter', 'authorizer', FCGI_RESPONDER, FCGI_FILTER, FCGI_AUTHORIZER):
-            self.start_server(role=role).stop()
+            with make_server_conn(role=role) as conn:
+                self._run_get_values(conn)
 
         for bad_role in (979897, 'sdjflskdfj'):
             with self.assertRaises(ValueError):
-                self.start_server(role=bad_role)
+                with make_server(role=bad_role):
+                    pass
 
     def test_workers(self):
-        server = self.start_server(num_workers=3)
-        server.start()
-        self.assertEqual(len(server.workers), 3)
-        server.stop()
+        with make_server(num_workers=3) as server:
+            self.assertEqual(len(server.workers), 3)
         
         for bad_num in (0, -10):
             with self.assertRaises(ValueError):
-                self.start_server(num_workers=bad_num)
+                make_server(num_workers=bad_num)
 
-    def test_bad_record(self):
-        recs = self.handle_records(Record(193))
-        self.assertEqual(1, len(recs))
-        self.assertEqual(recs[0].type, FCGI_UNKNOWN_TYPE)
+        # 1 worker does not spawn anything
+        with make_server(num_workers=1) as server:
+            self.assertEqual(0, len(server.workers))
 
-    def test_request_id(self):
-        recs = self.handle_records(Record(FCGI_ABORT_REQUEST, request_id=123))
-        self.assertFalse(recs)
+    def test_unknown_record_type(self):
+        with make_server_conn() as conn:
+            conn.write_record(Record(123))
+            conn.done_writing()
+            done = False
+            for record in conn:
+                self.assertFalse(done)
+                self.assertEquals(record.type, FCGI_UNKNOWN_TYPE)
+                done = True
 
-    def test_get_values(self):
-        caps = (FCGI_MAX_CONNS, FCGI_MPXS_CONNS)
-        content = pack_pairs(((name, '') for name in caps))
-        recs = self.handle_records(Record(FCGI_GET_VALUES, content))
-
-        self.assertEqual(1, len(recs))
-
-        rec = recs[0]
-        self.assertEqual(rec.type, FCGI_GET_VALUES_RESULT)
-
-        values = dict(unpack_pairs(rec.content))
-        for name in caps:
-            self.assertIn(name, values)
-            self.assertTrue(isinstance(values[name], basestring))
+    def test_bad_request_id(self):
+        with make_server_conn() as conn:
+            conn.write_record(Record(FCGI_ABORT_REQUEST, '', 666))
+            self.assertIs(conn.read_record(), None)
 
     def test_responder(self):
-        request = [
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 31),
-            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 31),
-            Record(FCGI_PARAMS, '', 31),
-            Record(FCGI_STDIN, DATA, 31),
-            Record(FCGI_STDIN, '', 31),
-            ]
-        self.handle_records(request)
+        request_id = 1
+        request = (
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
+            (FCGI_PARAMS, '', request_id),
+            (FCGI_STDIN, DATA, request_id),
+            (FCGI_STDIN, '', request_id),
+        )
+        response = self._handle_one_request(request_id, request)
+        self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
+        self.assertTrue(response.stdout_closed)
+        self.assertTrue(response.stderr_closed)
 
     def test_filter(self):
+        request_id = 2
         request = [
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_FILTER, 0), 1),
-            Record(FCGI_PARAMS, '', 1),
-            Record(FCGI_STDIN, '', 1),
-            Record(FCGI_DATA, '', 1),
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_FILTER, 0), request_id),
+            (FCGI_PARAMS, pack_env(), request_id),
+            (FCGI_PARAMS, '', request_id),
+            (FCGI_STDIN, '', request_id),
+            (FCGI_DATA, '', request_id),
             ]
-        self.handle_records(request, role=FCGI_FILTER)
+        response = self._handle_one_request(request_id, request, address='asdasdasd', role=FCGI_FILTER)
+        self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
+        self.assertTrue(response.stdout_closed)
+        self.assertTrue(response.stderr_closed)
+
+    def test_multiple_requests(self):
+        requests = [
+            # keep "connection" open after first request is processed
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, FCGI_KEEP_CONN), 3),
+            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 3),
+            (FCGI_PARAMS, '', 3),
+            (FCGI_STDIN, DATA, 3),
+            (FCGI_STDIN, '', 3),
+            # and after this one connection supposed to be closed by 
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 4),
+            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 4),
+            (FCGI_PARAMS, '', 4),
+            (FCGI_STDIN, DATA, 4),
+            (FCGI_STDIN, '', 4),
+            ]
+        for response in self._handle_requests((3, 4), requests):
+            self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
+            self.assertTrue(response.stdout_closed)
+            self.assertTrue(response.stderr_closed)
 
     def test_wrong_role(self):
+        request_id = 5
         request = [
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 31),
-            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 31),
-            Record(FCGI_PARAMS, '', 31),
-            Record(FCGI_STDIN, DATA, 31),
-            Record(FCGI_STDIN, '', 31),
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
+            (FCGI_PARAMS, '', request_id),
+            (FCGI_STDIN, '', request_id),
             ]
-        self.handle_records(request, role=FCGI_FILTER)
+        response = self._handle_one_request(request_id, request, role=FCGI_FILTER)
+        self.assertEqual(response.request_status, FCGI_UNKNOWN_ROLE)
 
     def test_abort_request(self):
+        request_id = 6
         request = [
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 2),
-            Record(FCGI_ABORT_REQUEST, '', 2),
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            (FCGI_ABORT_REQUEST, '', request_id),
             ]
-        self.handle_records(request)
+        response = self._handle_one_request(request_id, request)
+        self.assertIs(response.stdout, None)
+        self.assertIs(response.stderr, None)
 
+        # let greenlet start after final FCGI_PARAMS then abort the request
+        request_id = 7
         request = [
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 2),
-            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 2),
-            Record(FCGI_PARAMS, '', 2),
-            Record(FCGI_STDIN, DATA, 2),
-            Record(FCGI_STDIN, '', 2),
-            Record(FCGI_ABORT_REQUEST, '', 2),
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
+            (FCGI_PARAMS, '', request_id),
+            (FCGI_ABORT_REQUEST, '', request_id),
             ]
-        self.handle_records(request, app=slow_app)
+        # run slow_app to make sure server cannot complete request faster than FCGI_ABORT_REQUEST "arrives"
+        response = self._handle_one_request(request_id, request, app=slow_app)
+        self.assertTrue(response.stdout.startswith('Status: 500 '))
+        self.assertTrue(response.stderr.startswith('Traceback (most recent call last):'))
 
     def test_multiplexer(self):
-        request = [
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 1),
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 2),
-            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 1),
-            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 2),
-            Record(FCGI_PARAMS, '', 2),
-            Record(FCGI_PARAMS, '', 1),
-            Record(FCGI_STDIN, DATA, 1),
-            Record(FCGI_STDIN, DATA, 2),
-            Record(FCGI_STDIN, '', 2),
-            Record(FCGI_STDIN, '', 1),
+        requests = [
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 8),
+            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 8),
+            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 9),
+            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 9),
+            (FCGI_PARAMS, '', 9),
+            (FCGI_PARAMS, '', 8),
+            (FCGI_STDIN, DATA, 9),
+            (FCGI_STDIN, DATA, 8),
+            (FCGI_STDIN, '', 9),
+            (FCGI_STDIN, '', 8),
             ]
-        self.handle_records(request, app=echo_app)
 
-    def start_server(self, address=ADDRESS, app=app, **kw):
-        server = WSGIServer(address, app, **kw)
-        self._servers.append(server)
-        return server
+        for response in self._handle_requests((8, 9), requests, app=echo_app):
+            self.assertEqual(response.request_status, FCGI_REQUEST_COMPLETE)
+            self.assertTrue(response.stdout_closed and response.stderr_closed)
+            self.assertTrue(response.stdout.startswith('Status: 200 OK\r\n\r\n'))
+            self.assertEqual(len(response.stdout) - 18, len(DATA))
 
-    def handle_records(self, records, **kw):
-        # serialize records
-        sock = MockSocket()
-        conn = Connection(sock, 1024)
-        if isinstance(records, Record):
-            records = [records]
-        map(conn.write_record, records)
+    # Helpers
 
-        # move serialized records into socket's input buffer
-        sock.flip()
+    def _run_get_values(self, conn):
+        names = (FCGI_MAX_CONNS, FCGI_MAX_REQS, FCGI_MPXS_CONNS)
+        get_values_record = Record(FCGI_GET_VALUES, pack_pairs(dict.fromkeys(names, '')))
 
-        server = self.start_server(**kw)
-        server.handle_connection(sock, '<fake-peer>')
-        server.stop()
+        conn.write_record(get_values_record)
+        # signal we're done sending so server can exit reading loop
+        conn.done_writing()
+        done = False
+        for record in conn:
+            self.assertFalse(done)
+            self.assertEquals(record.type, FCGI_GET_VALUES_RESULT)
+            values = dict(unpack_pairs(record.content))
+            for name in names:
+                self.assertIn(name, values)
+            done = True
 
-        # read server response
-        sock.flip()
-        return list(iter(conn.read_record, None))
+    def _handle_one_request(self, request_id, records, **server_params):
+        return self._handle_requests([request_id], records, **server_params)[0]
 
-    def setUp(self):
-        self._servers = []
+    def _handle_requests(self, request_ids, records, **server_params):
+        records = (Record(*params) for params in records)
+        responses = dict((request_id, Response(request_id)) for request_id in request_ids)
+        
+        with make_server_conn(**server_params) as conn:
+            map(conn.write_record, records)
+            conn.done_writing()
 
-    def tearDown(self):
-        for server in self._servers:
-            server.stop()
+            for record in conn:
+                self.assertIn(record.request_id, responses)
+                response = responses[record.request_id]
+                self.assertIs(response.request_status, None)
+                if record.type == FCGI_STDOUT:
+                    self.assertFalse(response.stdout_closed)
+                    if response.stdout is None:
+                        response.stdout = record.content
+                    else:
+                        response.stdout += record.content
+                    if not record.content:
+                        response.stdout_closed = True
+                elif record.type == FCGI_STDERR:
+                    self.assertFalse(response.stderr_closed)
+                    if response.stderr is None:
+                        response.stderr = record.content
+                    else:
+                        response.stderr += record.content
+                    if not record.content:
+                        response.stderr_closed = True
+                elif record.type == FCGI_END_REQUEST:
+                    response.app_status, response.request_status = end_request_struct.unpack(record.content)
+                else:
+                    self.fail('Unexpected record type %s' % record.type)
+
+        return responses.values()
+
+
+class Response(object):
+
+    def __init__(self, request_id):
+        self.request_id = request_id
+        self.stdout = None
+        self.stdout_closed = False
+        self.stderr = None
+        self.stderr_closed = False
+        self.request_status = None
+        self.app_status = None

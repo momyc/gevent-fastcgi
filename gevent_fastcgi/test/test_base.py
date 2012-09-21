@@ -7,7 +7,7 @@ from gevent_fastcgi.test.utils import MockSocket
 TEST_DATA = ''.join(map(chr, range(256)))
 
 
-class SmallTests(unittest.TestCase):
+class RecordTests(unittest.TestCase):
 
     def test_bad_record(self):
         self.assertRaises(ValueError, Record, 12345)
@@ -70,54 +70,19 @@ class StreamTests(unittest.TestCase):
 
 class ConnectionTests(unittest.TestCase):
 
-    def test_read_write_records(self):
+    def test_write_long_content(self):
         sock = MockSocket()
         conn = Connection(sock)
 
-        records = [Record(*params) for params in [
-                (FCGI_GET_VALUES,),
-                (FCGI_BEGIN_REQUEST, TEST_DATA, 731),
-                (FCGI_STDIN, TEST_DATA * 8),
-                ]]
+        # this single record will be split into two at 0xfff8
+        conn.write_record(Record(FCGI_STDIN, '*' * 0x10000, 1))
+        self.assertEquals(len(sock.output), 8 + 8 + 0x10000)
 
-        # write, read, compare
-        for out_rec in records:
-            conn.write_record(out_rec)
-            sock.flip()
-            in_rec = conn.read_record()
-            self.assertEqual(out_rec, in_rec)
-
-        # write all, then read and compare
-        map(conn.write_record, records)
-        sock.flip()
-        in_records = list(iter(conn.read_record, None))
-        self.assertEqual(records, in_records)
-        
-    def test_long_write(self):
+    def test_too_long_content(self):
         sock = MockSocket()
         conn = Connection(sock)
-        long_data = TEST_DATA * 1024
-        
-        out_rec = Record(FCGI_STDIN, long_data, 123)
-        conn.write_record(out_rec)
-        sock.flip()
-
-        clen = 0
-        while True:
-            in_rec = conn.read_record()
-            if in_rec is None:
-                break
-            clen += len(in_rec.content)
-        self.assertEqual(len(long_data), clen)
 
         with self.assertRaises(ValueError):
-            conn.write_record(Record(FCGI_GET_VALUES, long_data))
-
-    def test_partial_read(self):
-        sock = MockSocket('1234')
-        conn = Connection(sock)
-
-        self.assertRaises(PartialRead, conn.read_record)
-
-
+            # Record of this type won't be split
+            conn.write_record(Record(FCGI_GET_VALUES, '*' * 0x10000))
 
