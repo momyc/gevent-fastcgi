@@ -226,8 +226,8 @@ class WSGIServer(StreamServer):
                     return # pragma: no cover
                 self.workers.append(pid)
 
-    def stop(self):
-        super(WSGIServer, self).stop()
+    def stop(self, timeout=None):
+        super(WSGIServer, self).stop(timeout)
         self._cleanup()
             
     def handle_connection(self, sock, addr):
