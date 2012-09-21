@@ -51,7 +51,7 @@ class PartialRead(Exception):
     """ Raised by buffered_reader when it fails to read requested length of data
     """
     def __init__(self, requested_size, partial_data):
-        super(PartialRead, self).__init__('Expected %s but received %s bytes only', requested_size, len(partial_data))
+        super(PartialRead, self).__init__('Expected %s but received %s bytes only' % (requested_size, len(partial_data)))
         self.requested_size = requested_size
         self.partial_data = partial_data
 
