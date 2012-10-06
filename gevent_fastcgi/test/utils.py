@@ -1,5 +1,6 @@
 import errno
 from random import random, randint
+import logging
 from zope.interface import implements
 from gevent import socket, sleep
 from gevent_fastcgi.interfaces import IServer
@@ -12,6 +13,9 @@ from gevent_fastcgi.base import (
     Connection
     )
 from gevent_fastcgi.server import WSGIServer
+
+
+logger = logging.getLogger(__name__)
 
 
 data = map('\n'.__add__, [
@@ -47,29 +51,61 @@ def pack_env(**vars):
     return pack_pairs(env)
 
 
+class IterWithClose(object):
+
+    def __init__(self, orig):
+        self.iter = iter(orig)
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        return self.iter.next()
+
+    def close(self):
+        logger.debug('%s.close was called' % self.__class__.__name__)
+
+
 def app(environ, start_response):
     stdin = environ['wsgi.input']
     stdin.read()
-    sleep(0)
-    start_response('200 OK', [])
+    write = start_response('200 OK', [])
     stderr = environ['wsgi.errors']
     stderr.writelines(data)
     stderr.flush()
+    write('')
+    map(write, data)
     return ['', ''] + data
 
 
 def slow_app(environ, start_response):
+    logger.debug('Starting slow app')
     stdin = environ['wsgi.input']
-    for line in stdin:
-        sleep(0.001)
-    sleep(1)
+    stdin.read()
     start_response('200 OK', [])
+    sleep(3)
     return data
 
 
 def echo_app(environ, start_response):
     start_response('200 OK', [])
-    return environ['wsgi.input'].readlines()
+    return IterWithClose(environ['wsgi.input'])
+
+
+def failing_app(environ, start_response):
+    start_response('200 OK', [])
+    assert False, 'Something really bad happened!!!'
+
+
+def failing_app2(environ, start_response):
+    write = start_response('200 OK', [])
+    map(write, data)
+    assert False, 'Something really bad happened!!!'
+
+
+def empty_app(environ, start_response):
+    start_response('200 OK', [])
+    return []
 
 
 default_address = ('127.0.0.1', 47968)
@@ -93,6 +129,15 @@ class make_server(object):
             self.server.stop()
 
 
+class TestingConnection(Connection):
+
+    def write_record(self, record):
+        if isinstance(record, (int, long, float)):
+            sleep(record)
+        else:
+            super(TestingConnection, self).write_record(record)
+
+
 class make_connection(object):
 
     def __init__(self, address):
@@ -105,7 +150,7 @@ class make_connection(object):
             af = socket.AF_INET
         sock = socket.socket(af, socket.SOCK_STREAM)
         sock.connect(self.address)
-        self.conn = Connection(sock)
+        self.conn = TestingConnection(sock)
         return self.conn
 
     def __exit__(self, exc_type, exc_value, traceback):

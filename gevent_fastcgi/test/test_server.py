@@ -33,6 +33,9 @@ from gevent_fastcgi.test.utils import (
     app,
     slow_app,
     echo_app,
+    failing_app,
+    failing_app2,
+    empty_app,
     pack_env,
     make_server,
     make_connection,
@@ -94,11 +97,11 @@ class ServerTests(unittest.TestCase):
     def test_responder(self):
         request_id = 1
         request = (
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
-            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
-            (FCGI_PARAMS, '', request_id),
-            (FCGI_STDIN, DATA, request_id),
-            (FCGI_STDIN, '', request_id),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            Record(FCGI_STDIN, DATA, request_id),
+            Record(FCGI_STDIN, '', request_id),
         )
         response = self._handle_one_request(request_id, request)
         self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
@@ -108,11 +111,11 @@ class ServerTests(unittest.TestCase):
     def test_filter(self):
         request_id = 2
         request = [
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_FILTER, 0), request_id),
-            (FCGI_PARAMS, pack_env(), request_id),
-            (FCGI_PARAMS, '', request_id),
-            (FCGI_STDIN, '', request_id),
-            (FCGI_DATA, '', request_id),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_FILTER, 0), request_id),
+            Record(FCGI_PARAMS, pack_env(), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            Record(FCGI_STDIN, '', request_id),
+            Record(FCGI_DATA, '', request_id),
             ]
         response = self._handle_one_request(request_id, request, address='asdasdasd', role=FCGI_FILTER)
         self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
@@ -122,17 +125,17 @@ class ServerTests(unittest.TestCase):
     def test_multiple_requests(self):
         requests = [
             # keep "connection" open after first request is processed
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, FCGI_KEEP_CONN), 3),
-            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 3),
-            (FCGI_PARAMS, '', 3),
-            (FCGI_STDIN, DATA, 3),
-            (FCGI_STDIN, '', 3),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, FCGI_KEEP_CONN), 3),
+            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 3),
+            Record(FCGI_PARAMS, '', 3),
+            Record(FCGI_STDIN, DATA, 3),
+            Record(FCGI_STDIN, '', 3),
             # and after this one connection supposed to be closed by 
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 4),
-            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 4),
-            (FCGI_PARAMS, '', 4),
-            (FCGI_STDIN, DATA, 4),
-            (FCGI_STDIN, '', 4),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 4),
+            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 4),
+            Record(FCGI_PARAMS, '', 4),
+            Record(FCGI_STDIN, DATA, 4),
+            Record(FCGI_STDIN, '', 4),
             ]
         for response in self._handle_requests((3, 4), requests):
             self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
@@ -142,10 +145,10 @@ class ServerTests(unittest.TestCase):
     def test_wrong_role(self):
         request_id = 5
         request = [
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
-            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
-            (FCGI_PARAMS, '', request_id),
-            (FCGI_STDIN, '', request_id),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            Record(FCGI_STDIN, '', request_id),
             ]
         response = self._handle_one_request(request_id, request, role=FCGI_FILTER)
         self.assertEqual(response.request_status, FCGI_UNKNOWN_ROLE)
@@ -153,8 +156,8 @@ class ServerTests(unittest.TestCase):
     def test_abort_request(self):
         request_id = 6
         request = [
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
-            (FCGI_ABORT_REQUEST, '', request_id),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            Record(FCGI_ABORT_REQUEST, '', request_id),
             ]
         response = self._handle_one_request(request_id, request)
         self.assertIs(response.stdout, None)
@@ -163,35 +166,72 @@ class ServerTests(unittest.TestCase):
         # let greenlet start after final FCGI_PARAMS then abort the request
         request_id = 7
         request = [
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
-            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), request_id),
-            (FCGI_PARAMS, '', request_id),
-            (FCGI_ABORT_REQUEST, '', request_id),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST', HTTPS='on'), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            Record(FCGI_STDIN, '', request_id),
+            # make short delay!!!
+            0.5,
+            Record(FCGI_ABORT_REQUEST, '', request_id),
             ]
         # run slow_app to make sure server cannot complete request faster than FCGI_ABORT_REQUEST "arrives"
         response = self._handle_one_request(request_id, request, app=slow_app)
-        self.assertTrue(response.stdout.startswith('Status: 500 '))
-        self.assertTrue(response.stderr.startswith('Traceback (most recent call last):'))
+        if response.stdout is not None:
+            self.assertTrue(response.stdout.startswith('Status: 500 '))
+        if response.stdout is not None:
+            self.assertTrue(response.stderr.startswith('Traceback (most recent call last):'))
 
     def test_multiplexer(self):
         requests = [
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 8),
-            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 8),
-            (FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 9),
-            (FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 9),
-            (FCGI_PARAMS, '', 9),
-            (FCGI_PARAMS, '', 8),
-            (FCGI_STDIN, DATA, 9),
-            (FCGI_STDIN, DATA, 8),
-            (FCGI_STDIN, '', 9),
-            (FCGI_STDIN, '', 8),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 8),
+            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 8),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), 9),
+            Record(FCGI_PARAMS, pack_env(REQUEST_METHOD='POST'), 9),
+            Record(FCGI_PARAMS, '', 9),
+            Record(FCGI_PARAMS, '', 8),
+            Record(FCGI_STDIN, DATA, 9),
+            Record(FCGI_STDIN, DATA, 8),
+            Record(FCGI_STDIN, '', 9),
+            Record(FCGI_STDIN, '', 8),
             ]
-
         for response in self._handle_requests((8, 9), requests, app=echo_app):
             self.assertEqual(response.request_status, FCGI_REQUEST_COMPLETE)
             self.assertTrue(response.stdout_closed and response.stderr_closed)
             self.assertTrue(response.stdout.startswith('Status: 200 OK\r\n\r\n'))
             self.assertEqual(len(response.stdout) - 18, len(DATA))
+
+    def test_failed_request(self):
+        request_id = 10
+        request = [
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            Record(FCGI_STDIN, '', request_id),
+            ]
+        response = self._handle_one_request(request_id, request, app=failing_app)
+        self.assertTrue(response.stdout.startswith('Status: 500 Internal Server Error'))
+        self.assertTrue(response.stderr.startswith('Traceback (most recent call last):'))
+
+        request_id = 11
+        request = [
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            Record(FCGI_STDIN, '', request_id),
+            ]
+        response = self._handle_one_request(request_id, request, app=failing_app2)
+        print response.stdout
+        print '*' * 100
+        print response.stderr
+
+    def test_empty_response(self):
+        request_id = 12
+        request = [
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            Record(FCGI_STDIN, '', request_id),
+            ]
+        response = self._handle_one_request(request_id, request, app=empty_app)
+        self.assertEquals(response.stdout, 'Status: 200 OK\r\n\r\n')
+        self.assertEquals(response.stderr, '')
 
     # Helpers
 
@@ -215,7 +255,6 @@ class ServerTests(unittest.TestCase):
         return self._handle_requests([request_id], records, **server_params)[0]
 
     def _handle_requests(self, request_ids, records, **server_params):
-        records = (Record(*params) for params in records)
         responses = dict((request_id, Response(request_id)) for request_id in request_ids)
         
         with make_server_conn(**server_params) as conn:
