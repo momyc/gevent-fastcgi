@@ -22,10 +22,9 @@ from __future__ import with_statement
 import os
 import logging
 from zope.interface import implements
-from wsgiref.handlers import BaseCGIHandler
-# from gevent_fastcgi.wsgi import Request
+from gevent_fastcgi.wsgi import Request
 
-from gevent import socket, spawn, joinall, sleep
+from gevent import socket, spawn, joinall, sleep, kill
 from gevent.server import StreamServer
 from gevent.coros import RLock
 
@@ -42,23 +41,6 @@ EXISTING_REQUEST_REC_TYPES = frozenset((
     FCGI_PARAMS,
     FCGI_ABORT_REQUEST,
     ))
-
-
-class Request(object):
-    
-    def __init__(self, conn, request_id):
-        self.conn = conn
-        self.id = request_id
-        self.stdin = InputStream()
-        self.stdout = OutputStream(conn, request_id, FCGI_STDOUT)
-        self.stderr = OutputStream(conn, request_id, FCGI_STDERR)
-        self.environ_list = []
-        self.environ = {}
-        self.greenlet = None
-
-    def run(self, app):
-        handler = BaseCGIHandler(self.stdin, self.stdout, self.stderr, self.environ)
-        handler.run(app)
 
 
 class ServerConnection(Connection):
@@ -85,14 +67,17 @@ class ConnectionHandler(object):
         self.conn.write_record(Record(record_type, content, request_id))
 
     def run_app(self, request):
+        ''' This is run by separate greenlet
+        '''
         try:
             request.run(self.server.app)
+            request.stdin.close()
             request.stdout.close()
             request.stderr.close()
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
         finally:
             del self.requests[request.id]
-            if not self.requests and not self.keep_conn:
+            if not self.keep_conn and not self.requests:
                 self.conn.close()
 
     def fcgi_begin_request(self, record):
@@ -112,16 +97,15 @@ class ConnectionHandler(object):
             request.environ_list.append(record.content)
         else:
             request.environ.update(unpack_pairs(''.join(request.environ_list)))
-            request.greenlet = spawn(self.run_app, request)
-            # Probably a bug in gevent
-            # Without this killing greenlet blocks forever
-            sleep(0)
+            del request.environ_list
+            if request.role == FCGI_AUTHORIZER:
+                request.greenlet = spawn(self.run_app, request)
 
     def fcgi_abort_request(self, record, request):
         logger.warn('Request %s abortion' % request.id)
         greenlet = request.greenlet
-        if greenlet is not None and greenlet.started:
-            request.greenlet.kill()
+        if greenlet is not None:
+            kill(request.greenlet)
         else:
             del self.requests[request.id]
 
@@ -142,10 +126,14 @@ class ConnectionHandler(object):
                     logger.error('Non-existent request in %s. Closing connection!' % record)
                     self.conn.close()
                     break
-                if record.type == FCGI_STDIN: # pragma: no cover - for some reason this reported to be not covered
+                if record.type == FCGI_STDIN:
                     request.stdin.feed(record.content)
-                elif record.type == FCGI_DATA: # pragma: no cover - for some reason this reported to be not covered
+                    if record.content == '' and request.role == FCGI_RESPONDER:
+                        request.greenlet = spawn(self.run_app, request)
+                elif record.type == FCGI_DATA:
                     request.data.feed(record.content)
+                    if request.rrecord.content == '' and request.role == FCGI_FILTER:
+                        request.greenlet = spawn(self.run_app, request)
                 elif record.type == FCGI_PARAMS:
                     self.fcgi_params(record, request)
                 elif record.type == FCGI_ABORT_REQUEST:
@@ -162,7 +150,7 @@ class ConnectionHandler(object):
 
         wait_list = [request.greenlet for request in requests.values() if request.greenlet is not None]
         if wait_list:
-            joinall(wait_list) # pragma: no cover - for some reason this reported to be not covered
+            joinall(wait_list)
 
 
 class WSGIServer(StreamServer):
@@ -226,8 +214,8 @@ class WSGIServer(StreamServer):
                     return # pragma: no cover
                 self.workers.append(pid)
 
-    def stop(self, timeout=None):
-        super(WSGIServer, self).stop(timeout)
+    def stop(self, *args, **kw):
+        super(WSGIServer, self).stop(*args, **kw)
         self._cleanup()
             
     def handle_connection(self, sock, addr):

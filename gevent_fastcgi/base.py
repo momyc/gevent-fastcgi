@@ -144,7 +144,7 @@ class Connection(object):
         try:
             header = read_bytes(FCGI_RECORD_HEADER_LEN)
         except PartialRead, x:
-            if x.partial_data: # pragma: no cover - for some reason these two lines claimed as not covered
+            if x.partial_data:
                 logger.exception('Partial header received: %s' % x)
                 raise
             # No error here. Remote side closed connection after sending all records
@@ -210,10 +210,9 @@ class InputStream(object):
             self.land()
         self.file.write(data)
 
-    def __iter__(self): # pragma: no cover
+    def __iter__(self):
         self.complete.wait()
-        self.__iter__ = self.file.__iter__
-        return self.__iter__
+        return self.file
 
     def __getattr__(self, attr):
         # Block until all data is received
