@@ -71,7 +71,6 @@ class ConnectionHandler(object):
         '''
         try:
             request.run(self.server.app)
-            request.stdin.close()
             request.stdout.close()
             request.stderr.close()
             self.reply(FCGI_END_REQUEST, end_request_struct.pack(0, FCGI_REQUEST_COMPLETE), request.id)
@@ -87,7 +86,7 @@ class ConnectionHandler(object):
             logger.error('Request role is %s but server is configured with %s', role, self.server.role)
         else:
             self.keep_conn = bool(FCGI_KEEP_CONN & flags)
-            request = Request(self.conn, record.request_id)
+            request = Request(self.conn, record.request_id, role)
             if role == FCGI_FILTER:
                 request.data = InputStream()
             self.requests[request.id] = request
@@ -132,7 +131,7 @@ class ConnectionHandler(object):
                         request.greenlet = spawn(self.run_app, request)
                 elif record.type == FCGI_DATA:
                     request.data.feed(record.content)
-                    if request.rrecord.content == '' and request.role == FCGI_FILTER:
+                    if record.content == '' and request.role == FCGI_FILTER:
                         request.greenlet = spawn(self.run_app, request)
                 elif record.type == FCGI_PARAMS:
                     self.fcgi_params(record, request)

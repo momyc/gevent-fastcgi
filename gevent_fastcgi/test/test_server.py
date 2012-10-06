@@ -122,6 +122,18 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(response.stdout_closed)
         self.assertTrue(response.stderr_closed)
 
+    def test_authorizer(self):
+        request_id = 13
+        request = [
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_AUTHORIZER, 0), request_id),
+            Record(FCGI_PARAMS, pack_env(), request_id),
+            Record(FCGI_PARAMS, '', request_id),
+            ]
+        response = self._handle_one_request(request_id, request, app=empty_app, role=FCGI_AUTHORIZER)
+        self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
+        self.assertTrue(response.stdout_closed)
+        self.assertTrue(response.stderr_closed)
+
     def test_multiple_requests(self):
         requests = [
             # keep "connection" open after first request is processed
