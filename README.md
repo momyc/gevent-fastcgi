@@ -1,8 +1,9 @@
 #gevent-fastcgi
 
-FastCGI/WSGI server implementation using gevent library. No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
+WSGI-over-FastCGI server implementation using `gevent <http://www.gevent.org/>`_ coroutine-based network  library.
+No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
-Supports connection multiplexing. Out-of-the-box support for Django and frameworks that use PasteDeploy including Pylons and Pyramid.
+Supports connection multiplexing. Includes adapters for Django and frameworks that use PasteDeploy like Pylons and Pyramid.
 
 ## Installation
 
