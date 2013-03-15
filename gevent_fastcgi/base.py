@@ -19,75 +19,27 @@
 #    THE SOFTWARE.
 
 from __future__ import with_statement
+
 import os
 import sys
 import logging
 from errno import EPIPE, ECONNRESET
 from tempfile import TemporaryFile
 import struct
-from zope.interface import implements
 
 try:
     from cStringIO import StringIO
 except ImportError: # pragma: no cover
     from StringIO import StringIO
 
+from zope.interface import implements
 from gevent import socket
 from gevent.event import Event
 
 from gevent_fastcgi.interfaces import IRecord, IConnection
-from gevent_fastcgi.utils import pack_pairs, unpack_pairs, PartialRead, BufferedReader
+# all names starting with FCGI_ are defined there
+from gevent_fastcgi.const import *
 
-
-logger = logging.getLogger('gevent_fastcgi')
-
-FCGI_VERSION = 1
-FCGI_LISTENSOCK_FILENO = 0
-FCGI_HEADER_LEN = 8
-FCGI_BEGIN_REQUEST = 1
-FCGI_ABORT_REQUEST = 2
-FCGI_END_REQUEST = 3
-FCGI_PARAMS = 4
-FCGI_STDIN = 5
-FCGI_STDOUT = 6
-FCGI_STDERR = 7
-FCGI_DATA = 8
-FCGI_GET_VALUES = 9
-FCGI_GET_VALUES_RESULT = 10
-FCGI_UNKNOWN_TYPE = 11
-FCGI_MAXTYPE = FCGI_UNKNOWN_TYPE
-FCGI_NULL_REQUEST_ID = 0
-FCGI_RECORD_HEADER_LEN = 8
-FCGI_KEEP_CONN = 1
-FCGI_RESPONDER = 1
-FCGI_AUTHORIZER = 2
-FCGI_FILTER = 3
-FCGI_REQUEST_COMPLETE = 0
-FCGI_CANT_MPX_CONN = 1
-FCGI_OVERLOADED = 2
-FCGI_UNKNOWN_ROLE = 3
-
-FCGI_RECORD_TYPES = {
-    FCGI_BEGIN_REQUEST: 'FCGI_BEGIN_REQUEST',
-    FCGI_ABORT_REQUEST: 'FCGI_ABORT_REQUEST',
-    FCGI_END_REQUEST: 'FCGI_END_REQUEST',
-    FCGI_PARAMS: 'FCGI_PARAMS',
-    FCGI_STDIN: 'FCGI_STDIN',
-    FCGI_STDOUT: 'FCGI_STDOUT',
-    FCGI_STDERR: 'FCGI_STDERR',
-    FCGI_DATA: 'FCGI_DATA',
-    FCGI_GET_VALUES: 'FCGI_GET_VALUES',
-    FCGI_GET_VALUES_RESULT: 'FCGI_GET_VALUES_RESULT',
-}
-
-FCGI_MAX_CONNS = 'FCGI_MAX_CONNS'
-FCGI_MAX_REQS = 'FCGI_MAX_REQS'
-FCGI_MPXS_CONNS = 'FCGI_MPXS_CONNS'
-
-header_struct = struct.Struct('!BBHHBx')
-begin_request_struct = struct.Struct('!HB5x')
-end_request_struct = struct.Struct('!LB3x')
-unknown_type_struct = struct.Struct('!B7x')
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +59,6 @@ class Record(object):
     def __str__(self):
         return '<Record %s, req id %s, %d bytes>' % (FCGI_RECORD_TYPES.get(self.type, self.type), self.request_id, len(self.content))
 
-    def __eq__(self, other):
-        return isinstance(other, Record) and (self.type == other.type) and (self.request_id == other.request_id) and (self.content == other.content)
-
 
 class Connection(object):
     
@@ -120,6 +69,7 @@ class Connection(object):
         self.buffered_reader = BufferedReader(sock.recv, buffer_size)
 
     def write_record(self, record):
+        logger.debug('Sending %s' % record)
         sendall = self._sock.sendall
         content_len = len(record.content)
         if content_len <= 0xffff:
@@ -138,7 +88,7 @@ class Connection(object):
             logger.error(msg)
             raise ValueError(msg)
   
-    def read_record(self):
+    def next(self):
         read_bytes = self.buffered_reader.read_bytes
         
         try:
@@ -148,7 +98,7 @@ class Connection(object):
                 logger.exception('Partial header received: %s' % x)
                 raise
             # No error here. Remote side closed connection after sending all records
-            return None
+            raise StopIteration
 
         version, record_type, request_id, content_len, padding = header_struct.unpack_from(header)
 
@@ -160,7 +110,10 @@ class Connection(object):
         if padding: # pragma: no cover
             read_bytes(padding)
 
-        return Record(record_type, content, request_id)
+        record = Record(record_type, content, request_id)
+        logger.debug('Received %s' % record)
+
+        return record
 
     def close(self):
         if self._sock:
@@ -171,7 +124,7 @@ class Connection(object):
         self._sock.shutdown(socket.SHUT_WR)
 
     def __iter__(self):
-        return iter(self.read_record, None)
+        return self
 
 
 class InputStream(object):
@@ -240,7 +193,7 @@ class OutputStream(object):
 
     def write(self, data):
         if self.closed:
-            raise socket.error(9, 'File is already closed')
+            raise ValueError('Write on closed OutputStream')
 
         if not data:
             return
@@ -263,3 +216,120 @@ class OutputStream(object):
 
     def __str__(self):
         return 'OutputStream(%s, %s)' % (FCGI_RECORD_TYPES[self.record_type], self.request_id)
+
+
+class Request(object):
+
+    def __init__(self, conn, request_id, role):
+        self.conn = conn
+        self.id = request_id
+        self.role = role
+        self.stdin = InputStream()
+        self.stdout = OutputStream(conn, request_id, FCGI_STDOUT)
+        self.stderr = OutputStream(conn, request_id, FCGI_STDERR)
+        self.greenlet = None
+        self.environ_list = []
+        self.environ = {}
+        self.status = None
+        self.headers = None
+        self.headers_sent = False
+
+
+try:
+    from gevent_fastcgi.speedups import pack_pair, unpack_pairs
+except ImportError: # pragma: no cover
+    import struct
+
+    length_struct = struct.Struct('!L')
+
+    def pack_len(s):
+        l = len(s)
+        if l < 128:
+            return chr(l)
+        elif l > 0x7fffffff:
+            raise ValueError('Maximum name or value length is %d', 0x7fffffff)
+        return length_struct.pack(l | 0x80000000)
+
+    def pack_pair(name, value):
+        return ''.join((pack_len(name), pack_len(value), name, value))
+
+    def unpack_len(buf, pos):
+        _len = ord(buf[pos])
+        if _len & 128:
+            _len = length_struct.unpack_from(buf, pos)[0] & 0x7fffffff
+            pos += 4
+        else:
+            pos += 1
+        return _len, pos
+
+    def unpack_pairs(data):
+        end = len(data)
+        pos = 0
+        while pos < end:
+            try:
+                name_len, pos = unpack_len(data, pos)
+                value_len, pos = unpack_len(data, pos)
+                name = data[pos:pos + name_len]
+                pos += name_len
+                value = data[pos:pos + value_len]
+                pos += value_len
+                yield name, value
+            except (IndexError, struct.error):
+                raise ValueError('Failed to unpack name/value pairs')
+
+def pack_pairs(pairs):
+    if isinstance(pairs, dict):
+        pairs = pairs.iteritems()
+
+    return ''.join(pack_pair(name, value) for name, value in pairs)
+
+
+class PartialRead(Exception):
+    """ Raised by buffered_reader when it fails to read requested length of data
+    """
+    def __init__(self, requested_size, partial_data):
+        super(PartialRead, self).__init__('Expected %s but received %s bytes only' % (requested_size, len(partial_data)))
+        self.requested_size = requested_size
+        self.partial_data = partial_data
+
+
+class BufferedReader(object):
+    """ Allows to receive data in large chunks
+    """
+    def __init__(self, read_callable, buffer_size):
+        self._reader = _reader_generator(read_callable, buffer_size)
+        self.read_bytes = self._reader.send
+        self._reader.next() # advance generator to first yield statement
+
+
+def _reader_generator(read, buf_size):
+    buf = ''
+    blen = 0
+    chunks = []
+    size = (yield)
+
+    while True:
+        if blen >= size:
+            data, buf = buf[:size], buf[size:]
+            blen -= size
+        else:
+            while blen < size:
+                chunks.append(buf)
+                buf = read((size - blen + buf_size - 1) / buf_size * buf_size)
+                if not buf:
+                    raise PartialRead(size, ''.join(chunks))
+                blen += len(buf)
+
+            blen -= size
+
+            if blen:
+                chunks.append(buf[:-blen])
+                buf = buf[-blen:]
+            else:
+                chunks.append(buf)
+                buf = ''
+
+            data = ''.join(chunks)
+            chunks = []
+        
+        size = (yield data)

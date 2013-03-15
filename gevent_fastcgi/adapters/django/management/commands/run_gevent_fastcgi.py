@@ -27,7 +27,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from os.path import abspath, dirname, isdir
-        from gevent_fastcgi.server import WSGIServer
+        from gevent_fastcgi.server import FastCGIServer
+        from gevent_fastcgi.wsgi import WSGIRequestHandler
         from django.core.handlers.wsgi import WSGIHandler
         
         if not args:
@@ -55,7 +56,12 @@ class Command(BaseCommand):
                     ('our_home_dir', 'out_log', 'err_log', 'umask'))
             become_daemon(**daemon_opts)
 
+        for name in ('num_workers', 'max_conns', 'buffer_size'):
+            if name in options:
+                options[name] = int(options[name])
+
         app = WSGIHandler()
-        server = WSGIServer(address, app, max_conns=options['max_conns'], max_reqs=options['max_reqs'])
+        request_handler = WSGIRequestHandler(app)
+        server = FastCGIServer(address, request_handler, **options)
         server.serve_forever()
 

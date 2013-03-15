@@ -1,23 +1,17 @@
+import sys
+import os
 import errno
 from random import random, randint
 import logging
 from zope.interface import implements
-from gevent import socket, sleep
-from gevent_fastcgi.interfaces import IServer
-from gevent_fastcgi.base import (
-    pack_pairs,
-    FCGI_RESPONDER,
-    FCGI_MAX_CONNS,
-    FCGI_MAX_REQS,
-    FCGI_MPXS_CONNS,
-    Connection
-    )
-from gevent_fastcgi.server import WSGIServer
+from gevent import socket, sleep, signal
+from gevent_fastcgi.const import FCGI_RESPONDER, FCGI_MAX_CONNS, FCGI_MAX_REQS, FCGI_MPXS_CONNS
+from gevent_fastcgi.base import Record, Connection, pack_pairs
+from gevent_fastcgi.server import FastCGIServer
+from gevent_fastcgi.wsgi import WSGIRequestHandler
 
 
 logger = logging.getLogger(__name__)
-
-
 data = map('\n'.__add__, [
     'Lorem ipsum dolor sit amet, consectetur adipisicing elit',
     'sed do eiusmod tempor incididunt ut labore et dolore magna aliqua',
@@ -51,19 +45,13 @@ def pack_env(**vars):
     return pack_pairs(env)
 
 
-class IterWithClose(object):
+def response_body(response):
+    return response.split('\r\n\r\n', 1)[1]
 
-    def __init__(self, orig):
-        self.iter = iter(orig)
 
-    def __iter__(self):
-        return self
-
-    def next(self):
-        return self.iter.next()
-
-    def close(self):
-        logger.debug('%s.close was called' % self.__class__.__name__)
+def response_headers(response):
+    headers = response.split('\r\n\r\n', 1)[0]
+    return [header.split(': ', 1) for header in headers.split('\r\n')]
 
 
 def app(environ, start_response):
@@ -81,26 +69,34 @@ def app(environ, start_response):
 def slow_app(environ, start_response):
     logger.debug('Starting slow app')
     stdin = environ['wsgi.input']
-    stdin.read()
+    for line in stdin:
+        pass
     start_response('200 OK', [])
-    sleep(3)
-    return data
+    
+    def response():
+        for line in data:
+            sleep(1)
+            yield line
+    return response()
 
 
 def echo_app(environ, start_response):
+    from StringIO import StringIO
+
     start_response('200 OK', [])
-    return IterWithClose(environ['wsgi.input'])
+    response = StringIO(environ['wsgi.input'].read())
+    return response
 
 
 def failing_app(environ, start_response):
     start_response('200 OK', [])
-    assert False, 'Something really bad happened!!!'
+    raise AssertionError('This is simulation of exception in application')
 
 
 def failing_app2(environ, start_response):
     write = start_response('200 OK', [])
     map(write, data)
-    assert False, 'Something really bad happened!!!'
+    raise AssertionError('This is simulation of exception in application')
 
 
 def empty_app(environ, start_response):
@@ -108,34 +104,14 @@ def empty_app(environ, start_response):
     return []
 
 
-default_address = ('127.0.0.1', 47968)
-
-
-class make_server(object):
-    """ Wrapper around server to ensure it's stopped
-    """
-    def __init__(self, address=default_address, app=app, **kw):
-        self.server = WSGIServer(address, app, **kw)
-        self.server.start()
-
-    def __enter__(self):
-        return self.server
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.server.stop()
-
-    def __del__(self):
-        if hasattr(self, 'server'):
-            self.server.stop()
-
-
 class TestingConnection(Connection):
 
     def write_record(self, record):
-        if isinstance(record, (int, long, float)):
-            sleep(record)
-        else:
+        if isinstance(record, Record):
             super(TestingConnection, self).write_record(record)
+            sleep(0)
+        else:
+            sleep(record)
 
 
 class make_connection(object):
@@ -157,24 +133,53 @@ class make_connection(object):
         self.conn.close()
 
 
-class make_server_conn(object):
-    
-    def __init__(self, address=default_address, app=app, **server_params):
+class start_server(object):
+    """ Wrapper around server to ensure it's stopped
+    """
+    def __init__(self, address=None, app=app, fork=False, **kw):
+        if address is None:
+            address = ('127.0.0.1', randint(1024, 65535))
         self.address = address
         self.app = app
-        self.server_params = server_params
+        if fork:
+            logger.warn('No forking in testing mode!')
+        self.fork = False # no forking
+        self.kw = kw
 
     def __enter__(self):
-        self.server = WSGIServer(self.address, self.app, **self.server_params)
-        self.server.start()
-        self.conn = make_connection(self.address)
-        return self.conn.__enter__()
-    
+        if self.fork:
+            pid = os.fork()
+            if pid:
+                self.pid = pid
+                sleep(1)
+            else:
+                request_handler = WSGIRequestHandler(self.app)
+                server = FastCGIServer(self.address, request_handler, **self.kw)
+                signal(15, server.stop)
+                server.serve_forever()
+                sys.exit()
+        else:
+            request_handler = WSGIRequestHandler(self.app)
+            self.server = FastCGIServer(self.address, request_handler, **self.kw)
+            self.server.start()
+        return self
+        
+
     def __exit__(self, exc_type, exc_value, traceback):
-        try:
-            self.conn.__exit__(exc_type, exc_value, traceback)
-        finally:
+        if self.fork:
+            if hasattr(self, 'pid'):
+                self._kill()
+        else:
             self.server.stop()
+
+    def __getattr__(self, attr):
+        return getattr(self.server, attr)
+
+    def _kill(self):
+        try:
+            os.kill(self.pid, 15)
+        finally:
+            os.waitpid(self.pid, 0)
     
 
 class MockSocket(object):
@@ -187,7 +192,7 @@ class MockSocket(object):
 
     def sendall(self, data):
         if self.closed:
-            raise socket.error(errno.EBADF, 'Closed socket')
+            raise ValueError('I/O operation on closed socket')
         if self.fail:
             raise socket.error(errno.EPIPE, 'Peer closed connection')
         self.output += data
@@ -221,8 +226,6 @@ class MockSocket(object):
 
 
 class MockServer(object):
-
-    implements(IServer)
 
     def __init__(self, role=FCGI_RESPONDER, max_conns=1024, app=app, response='OK'):
         self.role = role

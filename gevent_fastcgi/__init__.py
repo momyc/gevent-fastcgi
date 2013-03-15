@@ -23,3 +23,7 @@ FastCGI/WSGI server and client implemented using gevent library.
 Supports connection multiplexing. Contains paste.server_runner entry point.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
