@@ -1,4 +1,4 @@
-# Copyright (c) 2011-2012, Alexander Kulakov
+# Copyright (c) 2011-2013, Alexander Kulakov
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,7 @@ from zope.interface import implements
 from gevent import socket
 from gevent.event import Event
 
-from gevent_fastcgi.interfaces import IRecord, IConnection
+from gevent_fastcgi.interfaces import IConnection
 # all names starting with FCGI_ are defined there
 from gevent_fastcgi.const import *
 
@@ -46,7 +46,6 @@ logger = logging.getLogger(__name__)
 
 class Record(object):
     
-    implements(IRecord)
     __slots__ = ('type', 'content', 'request_id')
 
     def __init__(self, type, content='', request_id=FCGI_NULL_REQUEST_ID):
