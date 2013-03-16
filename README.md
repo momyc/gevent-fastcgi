@@ -1,9 +1,18 @@
 #gevent-fastcgi
 
-WSGI-over-FastCGI server implementation using **gevent** coroutine-based networking library ( <http://www.gevent.org/>).
+FastCGI server implementation using **gevent** coroutine-based networking library ( <http://www.gevent.org/>).
 No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
-Supports connection multiplexing. Includes adapters for Django and frameworks that use PasteDeploy like Pylons and Pyramid.
+Provides simple request handler API to allow for custom request handlers.
+Comes with `gevent_fastcgi.wsgi.WSGIRequestHandler` that uses standard `wsgiref.handlers.BasicCGIHandler`
+for running WSGI applications.
+
+Full support for FastCGI protocol connection multiplexing, i.e. it can serve multiple simulteneous requests
+over single connection. Requires support on Web-server side.
+
+Can be configured to fork multiple processes to better utilize multi-core CPUs.
+
+Includes adapters for Django and frameworks that use PasteDeploy like Pylons and Pyramid to simplify depolyment.
 
 ## Installation
 
@@ -18,18 +27,21 @@ $ easy_install gevent-fastcgi
 ## Usage
 
 ```python
-from gevent_fastcgi.server import WSGIServer
+from gevent_fastcgi.server import FastCGIServer
+from gevent_fastcgi.wsgi import WSGIHandler
 from myapp import app
 
-server = WSGIServer(('127.0.0.1', 4000), app, max_conns=1024)
+request_handler = WSGIRequestHandler(app(app)
+server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16)
 # To use UNIX-socket instead of TCP
-# server = WSGIServer('/path/to/socket', app, max_conns=4096)
+# server = FastCGIServer('/path/to/socket', request_handler, max_conns=4096)
 
 server.serve_forever()
 ```
 ### PasteDeploy
 
-Gevent-fastcgi defines paste.server_runner entry point. Use it as following:
+Gevent-fastcgi defines paste.server_runner entry point. It will run FastCGIServer with WSGIRequestHandler. 
+Use it as following:
 ```
 ...
 [server:main]
