@@ -148,25 +148,12 @@ class CGIRequestHandler(object):
             write(buf)
 
 
-def simplie_request_handler(request):
-    """
-    Request handler can be any callable
-    """
-    request.stdout.write('\r\n'.join((
-        'Status: 200 OK',
-        'Content-type: text/plain',
-        '',
-        'Hello, World!',
-    ))
-
-
 if __name__ == '__main__':
     from gevent_fastcgi.server import FastCGIServer
     
     address = ('127.0.0.1', 8000)
     handler = CGIRequestHandler('/var/www/cgi-bin')
     server = FastCGIServer(address, handler)
-    # server = FastCGIServer(address, simple_request_handler)
 
     server.serve_forever()
 ```
