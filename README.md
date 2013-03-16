@@ -62,3 +62,98 @@ num_workers = 8
 Add "gevent_fastcgi.adapters.django" to INSTALLED_APPS of settings.py then run the following command (replace host:port with desired values)
 ```
 python manage.py run_gevent_fastcgi host:port
+
+### Custom request handlers
+
+Starting from version 0.1.16dev It is possible to use custom request handler with `gevent_fastcgi.server.FastCGIServer`. Such a handler should implement `gevent_fastcgi.interfaces.IRequestHandler` interface and basically is just a callable that accepts single positional argument `request`. `gevent_fastcgi.wsgi` module contains `WSGIRequestHandler` which is `IRequestHandler` implementation that can run WSGI-application in order to serve request. 
+
+Request handler is run in separate greenlet. Request argument passed to request handler callable has the following attributes:
+
+* _environ_ Dictionary containing request environment (NOTE: contains whatever was sent by Web-server via FCGI_PARAM stream, i.e. *does not include current OS-environ variables*)
+* _stdin_ File-like object that represents request body, possibly empty
+* _stdout_ File-like object that should be used by request handler to send response (including response headers)
+* _stderr_ File-like object that can be used to send error information back to Web-server and sys.stderr
+
+The following is examples of custom request handler implementations:
+
+```python
+import os
+from zope.interface import implements
+from gevent import spawn, joinall
+from gevent_subprocess import Popen, PIPE
+from gevent_fastcgi.interfaces import IRequestHandler
+
+
+# WARNING!!!
+# CGIRequestHandler is for demonstration purposes only!!!
+# IT MUST NOT BE USED IN PRODUCTION ENVIRONMENT!!!
+
+class CGIRequestHandler(object):
+
+    implements(IRequestHandler)
+
+    def __init__(self, root, buf_size=1024):
+        self.root = os.path.abspath(root)
+        self.buf_size = buf_size
+
+    def __call__(self, request):
+        script_name = request.environ['SCRIPT_NAME']
+        if script_name.startswith('/'):
+            script_name = script_name[1:]
+        script_filename = os.path.join(self.root, script_name)
+
+        if script_filename.startswith(self.root) and 
+            os.path.isfile(script_filename) and
+            os.access(script_filename, os.X_OK):
+            proc = Popen(script_filename, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            joinall((spawn(self.copy_stream, src, dest) for src, dest in [
+                (request.stdin, proc.stdin),
+                (proc.stdout, request.stdout),
+                (proc.stderr, request.stderr),
+                ]))
+        else:
+            # report an error
+            request.stderr.write('Cannot locate or execute CGI-script %s' % script_filename)
+
+            # and send a reply
+            request.stdout.write('\r\n'.join((
+                'Status: 404 Not Found',
+                'Content-Type: text/plain',
+                '',
+                'No resource can be found for URI %s' % request.environ['REQUEST_URI'],
+                )))
+    
+    def copy_stream(self, src, dest):
+        buf_size = self.buf_size
+        read = src.read
+        write = dest.write
+
+        while 1:
+            buf = read(buf_size)
+            if not buf:
+                break
+            write(buf)
+
+
+def simplie_request_handler(request):
+    """
+    Request handler can be any callable
+    """
+    request.stdout.write('\r\n'.join((
+        'Status: 200 OK',
+        'Content-type: text/plain',
+        '',
+        'Hello, World!',
+    ))
+
+
+if __name__ == '__main__':
+    from gevent_fastcgi.server import FastCGIServer
+    
+    address = ('127.0.0.1', 8000)
+    handler = CGIRequestHandler('/var/www/cgi-bin')
+    server = FastCGIServer(address, handler)
+    # server = FastCGIServer(address, simple_request_handler)
+
+    server.serve_forever()
+```
