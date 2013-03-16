@@ -62,6 +62,7 @@ num_workers = 8
 Add "gevent_fastcgi.adapters.django" to INSTALLED_APPS of settings.py then run the following command (replace host:port with desired values)
 ```
 python manage.py run_gevent_fastcgi host:port
+```
 
 ### Custom request handlers
 
