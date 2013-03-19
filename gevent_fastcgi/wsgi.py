@@ -28,7 +28,11 @@ from wsgiref.headers import Headers
 from zope.interface import implements
 
 from gevent_fastcgi.interfaces import IRequestHandler
+from gevent_fastcgi.server import FastCGIServer
 from gevent_fastcgi.const import *
+
+
+__all__ = ('WSGIRequestHandler', 'WSGIServer')
 
 
 MANDATORY_WSGI_ENVIRON_VARS = frozenset((
@@ -57,3 +61,11 @@ class WSGIRequestHandler(object):
     def __call__(self, request):
         handler = BaseCGIHandler(request.stdin, request.stdout, request.stderr, request.environ)
         handler.run(self.app)
+
+
+class WSGIServer(FastCGIServer):
+
+    def __init__(self, address, app, **kwargs):
+        handler = WSGIRequestHandler(app)
+        super(WSGIServer, self).__init__(address, handler, **kwargs)
+
