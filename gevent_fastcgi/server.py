@@ -20,6 +20,7 @@
 
 from __future__ import with_statement
 
+import sys
 import os
 import logging
 
@@ -33,6 +34,8 @@ from gevent.event import Event
 from gevent_fastcgi.const import *
 from gevent_fastcgi.base import Connection, Record, InputStream, Request, pack_pairs, unpack_pairs
 
+
+__all__ = ('ServerConnection', 'FastCGIServer')
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +123,14 @@ class ConnectionHandler(object):
         self.send_record(FCGI_GET_VALUES_RESULT, content)
         self.event.set()
 
-    def run(self): # pragma: no cover
+    def run(self):
         self.event = Event()
         reader = spawn(self._reader)
         while 1:
             self.event.wait()
+            logger.debug('Request handler finished its job')
             if self.requests or (self.keep_open and not reader.ready()):
+                logger.debug('Connection left open due to remaining requests or KEEP_CONN flag')
                 self.event.clear()
             else:
                 break
@@ -138,17 +143,17 @@ class ConnectionHandler(object):
                 request = self.requests.get(record.request_id)
                 if not request:
                     logger.error('%s for non-existent request' % record)
-                elif record.type == FCGI_STDIN: # pragma: no cover
+                elif record.type == FCGI_STDIN:
                     request.stdin.feed(record.content)
                     if record.content == '' and request.role == FCGI_RESPONDER:
                         request.greenlet = spawn(self._handle_request, request)
-                elif record.type == FCGI_DATA: # pragma: no cover
+                elif record.type == FCGI_DATA:
                     request.data.feed(record.content)
                     if record.content == '' and request.role == FCGI_FILTER:
                         request.greenlet = spawn(self._handle_request, request)
-                elif record.type == FCGI_PARAMS: # pragma: no cover
+                elif record.type == FCGI_PARAMS:
                     self.fcgi_params(record, request)
-                elif record.type == FCGI_ABORT_REQUEST: # pragma: no cover
+                elif record.type == FCGI_ABORT_REQUEST:
                     self.fcgi_abort_request(record, request)
             elif record.type == FCGI_BEGIN_REQUEST:
                 self.fcgi_begin_request(record)
@@ -158,7 +163,7 @@ class ConnectionHandler(object):
                 logger.error('%s: Unknown record type' % record)
                 self.send_record(FCGI_UNKNOWN_TYPE, unknown_type_struct.pack(record.type))
 
-        self.event.set() # pragma: no cover
+        self.event.set()
 
 
 class FastCGIServer(StreamServer):
@@ -200,7 +205,7 @@ class FastCGIServer(StreamServer):
                 if pid:
                     self.workers.append(pid)
                 else: # pragma: no cover
-                    # master process should take care of it
+                    # child process should not return
                     try:
                         self.serve_forever()
                     finally:
