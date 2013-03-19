@@ -2,31 +2,16 @@ import sys
 import os
 import errno
 from random import random, randint
+from functools import wraps
 import logging
 from zope.interface import implements
 from gevent import socket, sleep, signal
 from gevent_fastcgi.const import FCGI_RESPONDER, FCGI_MAX_CONNS, FCGI_MAX_REQS, FCGI_MPXS_CONNS
 from gevent_fastcgi.base import Record, Connection, pack_pairs
-from gevent_fastcgi.server import FastCGIServer
-from gevent_fastcgi.wsgi import WSGIRequestHandler
+from gevent_fastcgi.wsgi import WSGIServer
 
 
 logger = logging.getLogger(__name__)
-data = map('\n'.__add__, [
-    'Lorem ipsum dolor sit amet, consectetur adipisicing elit',
-    'sed do eiusmod tempor incididunt ut labore et dolore magna aliqua',
-    't enim ad minim veniam, quis nostrud exercitation ullamco',
-    'laboris nisi ut aliquip ex ea commodo consequat',
-    '',
-])
-
-
-def dice():
-    return bool(randint(0, 3))
-
-
-def delay():
-    sleep(random() / 27.31)
 
 
 def pack_env(**vars):
@@ -45,63 +30,54 @@ def pack_env(**vars):
     return pack_pairs(env)
 
 
-def response_body(response):
-    return response.split('\r\n\r\n', 1)[1]
+def some_delay(delay=None):
+    if delay is None:
+        delay = randint(0, 3)
+    sleep(float(delay))
 
 
-def response_headers(response):
-    headers = response.split('\r\n\r\n', 1)[0]
-    return [header.split(': ', 1) for header in headers.split('\r\n')]
+class WSGIApplication(object):
 
+    def __init__(self, fail=None, response=None, response_headers=None, delay=None, slow=False):
+        self.fail = fail
+        self.response = response
+        self.response_headers = response_headers
+        self.delay = delay
+        self.slow = slow
 
-def app(environ, start_response):
-    stdin = environ['wsgi.input']
-    stdin.read()
-    write = start_response('200 OK', [])
-    stderr = environ['wsgi.errors']
-    stderr.writelines(data)
-    stderr.flush()
-    write('')
-    map(write, data)
-    return ['', ''] + data
+    def __call__(self, environ, start_response):
+        stdin = environ['wsgi.input']
 
+        if not self.delay is None:
+            some_delay(self.delay)
 
-def slow_app(environ, start_response):
-    logger.debug('Starting slow app')
-    stdin = environ['wsgi.input']
-    for line in stdin:
-        pass
-    start_response('200 OK', [])
-    
-    def response():
-        for line in data:
-            sleep(1)
-            yield line
-    return response()
+        if self.fail is not None:
+            stderr = environ['wsgi.errors']
+            stderr.write(str(self.fail))
+            stderr.flush()
+            raise self.fail
 
+        headers = (self.response_headers is None) and [('Conent-Type', 'text/plain')] or self.response_headers
 
-def echo_app(environ, start_response):
-    from StringIO import StringIO
+        start_response('200 OK', headers)
 
-    start_response('200 OK', [])
-    response = StringIO(environ['wsgi.input'].read())
-    return response
+        if self.response is None:
+            response = stdin.read() or self.data
+        else:
+            response = self.response
 
+        for data in response:
+            if self.slow:
+                some_delay()
+            yield data
 
-def failing_app(environ, start_response):
-    start_response('200 OK', [])
-    raise AssertionError('This is simulation of exception in application')
-
-
-def failing_app2(environ, start_response):
-    write = start_response('200 OK', [])
-    map(write, data)
-    raise AssertionError('This is simulation of exception in application')
-
-
-def empty_app(environ, start_response):
-    start_response('200 OK', [])
-    return []
+    data = map('\n'.__add__, [
+        'Lorem ipsum dolor sit amet, consectetur adipisicing elit',
+        'sed do eiusmod tempor incididunt ut labore et dolore magna aliqua',
+        't enim ad minim veniam, quis nostrud exercitation ullamco',
+        'laboris nisi ut aliquip ex ea commodo consequat',
+        '',
+    ])
 
 
 class TestingConnection(Connection):
@@ -109,9 +85,8 @@ class TestingConnection(Connection):
     def write_record(self, record):
         if isinstance(record, Record):
             super(TestingConnection, self).write_record(record)
-            sleep(0)
         else:
-            sleep(record)
+            sleep(float(record))
 
 
 class make_connection(object):
@@ -133,17 +108,13 @@ class make_connection(object):
         self.conn.close()
 
 
-class start_server(object):
+class wsgi_server(object):
     """ Wrapper around server to ensure it's stopped
     """
-    def __init__(self, address=None, app=app, fork=False, **kw):
-        if address is None:
-            address = ('127.0.0.1', randint(1024, 65535))
-        self.address = address
-        self.app = app
-        if fork:
-            logger.warn('No forking in testing mode!')
-        self.fork = False # no forking
+    def __init__(self, address=None, app=None, fork=False, **kw):
+        self.address = address is None and ('127.0.0.1', randint(1024, 65535)) or address
+        self.app = app is None and WSGIApplication() or app
+        self.fork = fork
         self.kw = kw
 
     def __enter__(self):
@@ -153,14 +124,12 @@ class start_server(object):
                 self.pid = pid
                 sleep(1)
             else:
-                request_handler = WSGIRequestHandler(self.app)
-                server = FastCGIServer(self.address, request_handler, **self.kw)
+                server = WSGIServer(self.address, self.app, **self.kw)
                 signal(15, server.stop)
                 server.serve_forever()
                 sys.exit()
         else:
-            request_handler = WSGIRequestHandler(self.app)
-            self.server = FastCGIServer(self.address, request_handler, **self.kw)
+            self.server = WSGIServer(self.address, self.app, **self.kw)
             self.server.start()
         return self
         
@@ -182,6 +151,13 @@ class start_server(object):
             os.waitpid(self.pid, 0)
     
 
+def check_socket(callable):
+    @wraps(callable)
+    def wrapper(self, *args, **kw):
+        return callable(self, *args, **kw)
+    return wrapper
+
+
 class MockSocket(object):
 
     def __init__(self, data=''):
@@ -191,27 +167,19 @@ class MockSocket(object):
         self.closed = False
 
     def sendall(self, data):
-        if self.closed:
-            raise ValueError('I/O operation on closed socket')
-        if self.fail:
-            raise socket.error(errno.EPIPE, 'Peer closed connection')
+        self.check_socket()
         self.output += data
-        delay()
+        self.some_delay()
 
     def recv(self, max_len=0):
-        if self.closed:
-            raise socket.error(errno.EBADF, 'Closed socket')
-        if self.fail:
-            raise socket.error(errno.EPIPE, 'Peer closed connection')
+        self.check_socket()
         if not self.input:
             return ''
         if max_len <= 0:
-            max_len = len(self.input)
-        if not dice():
-            max_len = randint(1, max_len)
+            max_len = self.read_size(len(self.input))
         data = self.input[:max_len]
         self.input = self.input[max_len:]
-        delay()
+        self.some_delay()
         return data
 
     def close(self):
@@ -224,13 +192,29 @@ class MockSocket(object):
         self.input, self.output = self.output, ''
         self.closed = False
 
+    def check_socket(self):
+        if self.closed:
+            raise socket.error(errno.EBADF, 'Closed socket')
+        if self.fail:
+            raise socket.error(errno.EPIPE, 'Peer closed connection')
+
+    @staticmethod
+    def read_size(size):
+        if bool(randint(0, 3)):
+            size = randint(1, size)
+        return size
+
+    @staticmethod
+    def some_delay():
+        sleep(random() / 27.31)
+
 
 class MockServer(object):
 
-    def __init__(self, role=FCGI_RESPONDER, max_conns=1024, app=app, response='OK'):
+    def __init__(self, role=FCGI_RESPONDER, max_conns=1024, app=None, response='OK'):
         self.role = role
         self.max_conns = max_conns
-        self.app = app
+        self.app = (app is None) and WSGIApplication() or app
         self.response = response
 
     def capability(self, name):
@@ -242,4 +226,24 @@ class MockServer(object):
             return '1'
         return ''
 
+
+class Response(object):
+
+    def __init__(self, request_id):
+        self.request_id = request_id
+        self.stdout = None
+        self.stdout_closed = False
+        self.stderr = None
+        self.stderr_closed = False
+        self.request_status = None
+        self.app_status = None
+
+    @property
+    def body(self):
+        return self.stdout.split('\r\n\r\n', 1)[1]
+
+    @property
+    def headers(slef):
+        headers = response.split('\r\n\r\n', 1)[0]
+        return dict([header.split(': ', 1) for header in headers.split('\r\n')])
 

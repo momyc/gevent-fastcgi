@@ -13,16 +13,11 @@ from gevent_fastcgi.base import (
 )
 
 from gevent_fastcgi.test.utils import (
-    app,
-    slow_app,
-    echo_app,
-    failing_app,
-    failing_app2,
-    empty_app,
-    response_body,
-    pack_env,
-    start_server,
+    WSGIApplication as app,
+    wsgi_server,
     make_connection,
+    Response,
+    pack_env,
 )
 
 
@@ -34,7 +29,7 @@ class ServerTests(unittest.TestCase):
     def test_address(self):
         unix_socket = 'socket.%s-%s' % (os.getppid(), os.getpid())
         for address in [('127.0.0.1', 47231), unix_socket]:
-            with start_server(address, fork=False):
+            with wsgi_server(address, fork=False):
                 with make_connection(address) as conn:
                     self._run_get_values(conn)
 
@@ -44,22 +39,22 @@ class ServerTests(unittest.TestCase):
 
     def test_role(self):
         for role in (FCGI_RESPONDER, FCGI_FILTER, FCGI_AUTHORIZER):
-            with start_server(role=role) as server:
+            with wsgi_server(role=role) as server:
                 with make_connection(server.address) as conn:
                     self._run_get_values(conn)
 
         for bad_role in (979897, 'sdfsdf', False):
             with self.assertRaises(ValueError):
-                with start_server(fork=False, role=bad_role):
+                with wsgi_server(fork=False, role=bad_role):
                     pass
 
     def test_workers(self):
         num_workers = 4
-        with start_server(fork=False, num_workers=num_workers) as server:
+        with wsgi_server(fork=False, num_workers=num_workers) as server:
             self.assertEqual(len(server.workers), num_workers)
 
     def test_unknown_record_type(self):
-        with start_server() as server:
+        with wsgi_server() as server:
             with make_connection(server.address) as conn:
                 conn.write_record(Record(123))
                 conn.done_writing()
@@ -71,7 +66,7 @@ class ServerTests(unittest.TestCase):
                 self.assertTrue(done)
 
     def test_bad_request_id(self):
-        with start_server() as server:
+        with wsgi_server() as server:
             with make_connection(server.address) as conn:
                 conn.write_record(Record(FCGI_ABORT_REQUEST, '', 1))
                 conn.done_writing()
@@ -113,7 +108,7 @@ class ServerTests(unittest.TestCase):
             Record(FCGI_PARAMS, pack_env(), request_id),
             Record(FCGI_PARAMS, '', request_id),
             ]
-        response = self._handle_one_request(request_id, request, app=empty_app, role=FCGI_AUTHORIZER)
+        response = self._handle_one_request(request_id, request, role=FCGI_AUTHORIZER, app=app(response=''))
         self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
         self.assertTrue(response.stdout_closed)
         self.assertTrue(response.stderr_closed)
@@ -138,7 +133,7 @@ class ServerTests(unittest.TestCase):
                 Record(FCGI_STDIN, DATA, request_id),
                 Record(FCGI_STDIN, '', request_id),
                 ]
-        for response in self._handle_requests((3, 4, 44, 444), requests, app=echo_app):
+        for response in self._handle_requests((3, 4, 44, 444), requests):
             self.assertEquals(response.request_status, FCGI_REQUEST_COMPLETE)
             self.assertTrue(response.stdout_closed)
             self.assertTrue(response.stderr_closed)
@@ -169,11 +164,11 @@ class ServerTests(unittest.TestCase):
             Record(FCGI_PARAMS, '', request_id),
             Record(FCGI_STDIN, '', request_id),
             # make short delay!!!
-            0.5,
+            1,
             Record(FCGI_ABORT_REQUEST, '', request_id),
             ]
         # run slow_app to make sure server cannot complete request faster than FCGI_ABORT_REQUEST "arrives"
-        response = self._handle_one_request(request_id, request, app=slow_app)
+        response = self._handle_one_request(request_id, request, app=app(delay=3))
         if response.stdout:
             self.assertTrue(response.stdout.startswith('Status: 500 '), 'Wrong STDOUT: %r' % response.stdout)
         if response.stderr:
@@ -193,20 +188,21 @@ class ServerTests(unittest.TestCase):
             Record(FCGI_STDIN, '', 9),
             Record(FCGI_STDIN, '', 8),
             ]
-        for response in self._handle_requests((8, 9), requests, app=echo_app):
+        for response in self._handle_requests((8, 9), requests):
             self.assertEqual(response.request_status, FCGI_REQUEST_COMPLETE)
             self.assertTrue(response.stdout_closed and response.stderr_closed)
-            self.assertTrue(response.stdout.startswith('Status: 200 OK\r\n\r\n'))
-            self.assertEqual(len(response.stdout) - 18, len(DATA))
+            self.assertTrue(response.stdout.startswith('Status: 200 OK\r\n'))
+            self.assertEqual(response.body, DATA)
 
     def test_failed_request(self):
+        error = AssertionError('Mock application failure')
         request_id = 10
         request = [
             Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(FCGI_RESPONDER, 0), request_id),
             Record(FCGI_PARAMS, '', request_id),
             Record(FCGI_STDIN, '', request_id),
             ]
-        response = self._handle_one_request(request_id, request, app=failing_app)
+        response = self._handle_one_request(request_id, request, app=app(fail=error))
         self.assertTrue(response.stdout.startswith('Status: 500 '), 'Wrong STDOUT: %r' % response.stdout)
         self.assertTrue(response.stderr)
 
@@ -216,7 +212,7 @@ class ServerTests(unittest.TestCase):
             Record(FCGI_PARAMS, '', request_id),
             Record(FCGI_STDIN, '', request_id),
             ]
-        response = self._handle_one_request(request_id, request, app=failing_app2)
+        response = self._handle_one_request(request_id, request, app=app(delay=1, fail=error))
 
     def test_empty_response(self):
         request_id = 12
@@ -225,8 +221,8 @@ class ServerTests(unittest.TestCase):
             Record(FCGI_PARAMS, '', request_id),
             Record(FCGI_STDIN, '', request_id),
             ]
-        response = self._handle_one_request(request_id, request, app=empty_app)
-        self.assertEquals(len(response_body(response.stdout)), 0)
+        response = self._handle_one_request(request_id, request, app=app(response=''))
+        self.assertEquals(len(response.body), 0)
         self.assertEquals(response.stderr, '')
 
     # Helpers
@@ -253,7 +249,7 @@ class ServerTests(unittest.TestCase):
     def _handle_requests(self, request_ids, records, **server_params):
         responses = dict((request_id, Response(request_id)) for request_id in request_ids)
         
-        with start_server(**server_params) as server:
+        with wsgi_server(**server_params) as server:
             with make_connection(server.address) as conn:
                 map(conn.write_record, records)
                 conn.done_writing()
@@ -283,15 +279,3 @@ class ServerTests(unittest.TestCase):
                         self.fail('Unexpected record type %s' % record.type)
 
         return responses.values()
-
-
-class Response(object):
-
-    def __init__(self, request_id):
-        self.request_id = request_id
-        self.stdout = None
-        self.stdout_closed = False
-        self.stderr = None
-        self.stderr_closed = False
-        self.request_status = None
-        self.app_status = None

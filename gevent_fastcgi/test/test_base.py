@@ -34,6 +34,10 @@ class StreamTests(unittest.TestCase):
         data = stream.read()
         self.assertEqual(data, '*' * MARK + '-')
 
+        stream.feed('asdfghjkl\r' * 10)
+        for line in stream:
+            pass
+
         with self.assertRaises(AttributeError):
             stream.missing_attribute
 
@@ -45,7 +49,7 @@ class StreamTests(unittest.TestCase):
         conn = Connection(sock)
 
         stdout = OutputStream(conn, 12345, FCGI_STDOUT)
-        stdout.write(TEST_DATA)
+        stdout.writelines(TEST_DATA for i in range(3))
 
         # writing empty string should not make it send anything
         sock.fail = True
@@ -57,12 +61,16 @@ class StreamTests(unittest.TestCase):
 
         stdout.close()
 
+        with self.assertRaises(ValueError):
+            stdout.write('sdfdsf')
+
         sock.flip()
 
-        in_rec = conn.next()
-        self.assertEqual(in_rec.type, FCGI_STDOUT)
-        self.assertEqual(in_rec.request_id, 12345)
-        self.assertEqual(TEST_DATA, in_rec.content)
+        for i in range(3):
+            in_rec = conn.next()
+            self.assertEqual(in_rec.type, FCGI_STDOUT)
+            self.assertEqual(in_rec.request_id, 12345)
+            self.assertEqual(TEST_DATA, in_rec.content)
 
         in_rec = conn.next()
         self.assertEqual(in_rec.type, FCGI_STDOUT)
