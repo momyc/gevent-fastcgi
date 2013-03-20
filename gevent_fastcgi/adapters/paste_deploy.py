@@ -22,10 +22,10 @@ import gevent.monkey
 from paste.deploy.converters import asbool
 
 from gevent_fastcgi.server import FastCGIServer
-from gevent_fastcgi.wsgi import WSGIRequestHandler
+from gevent_fastcgi.wsgi import WSGIServer
 
 
-def wsgi_server(app, conf, host='127.0.0.1', port=5000, socket=None, plain_fastcgi=False, **kwargs):
+def wsgi_server(app, conf, host='127.0.0.1', port=5000, socket=None, **kwargs):
     for name in kwargs.keys():
         if name in ('max_conns', 'num_workers', 'buffer_size'):
             kwargs[name] = int(kwargs[name])
@@ -35,9 +35,11 @@ def wsgi_server(app, conf, host='127.0.0.1', port=5000, socket=None, plain_fastc
                 getattr(gevent.monkey, name)()
 
     addr = socket or (host, int(port))
-    if plain_fastcgi:
-        request_handler = app
+
+    if asbool(kwargs.pop('plain_fastcgi', False)):
+        server_class = FastCGIServer
     else:
-        request_handler = WSGIRequestHandler(app)
-    FastCGIServer(addr, request_handler, **kwargs).serve_forever()
+        server_class = WSGIServer
+
+    server_class(addr, app, **kwargs).serve_forever()
 
