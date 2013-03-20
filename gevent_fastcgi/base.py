@@ -213,9 +213,6 @@ class OutputStream(object):
             self.conn.write_record(Record(self.record_type, '', self.request_id))
             self.closed = True
 
-    def __str__(self):
-        return 'OutputStream(%s, %s)' % (FCGI_RECORD_TYPES[self.record_type], self.request_id)
-
 
 class Request(object):
 
