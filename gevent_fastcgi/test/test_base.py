@@ -67,12 +67,12 @@ class StreamTests(unittest.TestCase):
         sock.flip()
 
         for i in range(3):
-            in_rec = conn.next()
+            in_rec = conn.read_record()
             self.assertEqual(in_rec.type, FCGI_STDOUT)
             self.assertEqual(in_rec.request_id, 12345)
             self.assertEqual(TEST_DATA, in_rec.content)
 
-        in_rec = conn.next()
+        in_rec = conn.read_record()
         self.assertEqual(in_rec.type, FCGI_STDOUT)
         self.assertEqual(in_rec.request_id, 12345)
         self.assertEqual('', in_rec.content)
@@ -116,5 +116,5 @@ class ConnectionTests(unittest.TestCase):
 
         conn = Connection(sock)
         with self.assertRaises(PartialRead):
-            conn.next()
+            conn.read_record()
 

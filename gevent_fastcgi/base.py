@@ -87,7 +87,7 @@ class Connection(object):
             logger.error(msg)
             raise ValueError(msg)
   
-    def next(self):
+    def read_record(self):
         read_bytes = self.buffered_reader.read_bytes
         
         try:
@@ -97,7 +97,7 @@ class Connection(object):
                 logger.exception('Partial header received: %s' % x)
                 raise
             # No error here. Remote side closed connection after sending all records
-            raise StopIteration
+            return None
 
         version, record_type, request_id, content_len, padding = header_struct.unpack_from(header)
 
@@ -114,6 +114,9 @@ class Connection(object):
 
         return record
 
+    def __iter__(self):
+        return iter(self.read_record, None)
+
     def close(self):
         if self._sock:
             self._sock.close()
@@ -121,9 +124,6 @@ class Connection(object):
 
     def done_writing(self):
         self._sock.shutdown(socket.SHUT_WR)
-
-    def __iter__(self):
-        return self
 
 
 class InputStream(object):

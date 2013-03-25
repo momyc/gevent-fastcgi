@@ -70,8 +70,7 @@ class ServerTests(unittest.TestCase):
             with make_connection(server.address) as conn:
                 conn.write_record(Record(FCGI_ABORT_REQUEST, '', 1))
                 conn.done_writing()
-                with self.assertRaises(StopIteration):
-                    conn.next()
+                self.assertIsNone(conn.read_record())
 
     def test_responder(self):
         request_id = 1
@@ -202,7 +201,7 @@ class ServerTests(unittest.TestCase):
             Record(FCGI_PARAMS, '', request_id),
             Record(FCGI_STDIN, '', request_id),
             ]
-        response = self._handle_one_request(request_id, request, app=app(fail=error))
+        response = self._handle_one_request(request_id, request, app=app(exception=error))
         self.assertTrue(response.stdout.startswith('Status: 500 '), 'Wrong STDOUT: %r' % response.stdout)
         self.assertTrue(response.stderr)
 
@@ -212,7 +211,7 @@ class ServerTests(unittest.TestCase):
             Record(FCGI_PARAMS, '', request_id),
             Record(FCGI_STDIN, '', request_id),
             ]
-        response = self._handle_one_request(request_id, request, app=app(delay=1, fail=error))
+        response = self._handle_one_request(request_id, request, app=app(delay=1, exception=error))
 
     def test_empty_response(self):
         request_id = 12

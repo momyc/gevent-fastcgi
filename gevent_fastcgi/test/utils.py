@@ -32,14 +32,14 @@ def pack_env(**vars):
 
 def some_delay(delay=None):
     if delay is None:
-        delay = randint(0, 3)
-    sleep(float(delay))
+        delay = random * 3
+    sleep(delay)
 
 
 class WSGIApplication(object):
 
-    def __init__(self, fail=None, response=None, response_headers=None, delay=None, slow=False):
-        self.fail = fail
+    def __init__(self, response=None, response_headers=None, exception=None, delay=None, slow=False):
+        self.exception = exception
         self.response = response
         self.response_headers = response_headers
         self.delay = delay
@@ -51,11 +51,11 @@ class WSGIApplication(object):
         if not self.delay is None:
             some_delay(self.delay)
 
-        if self.fail is not None:
+        if self.exception is not None:
             stderr = environ['wsgi.errors']
-            stderr.write(str(self.fail))
+            stderr.write(str(self.exception))
             stderr.flush()
-            raise self.fail
+            raise self.exception
 
         headers = (self.response_headers is None) and [('Conent-Type', 'text/plain')] or self.response_headers
 
@@ -163,7 +163,7 @@ class MockSocket(object):
     def __init__(self, data=''):
         self.input = data
         self.output = ''
-        self.fail = False
+        self.exception = False
         self.closed = False
 
     def sendall(self, data):
@@ -195,7 +195,7 @@ class MockSocket(object):
     def check_socket(self):
         if self.closed:
             raise socket.error(errno.EBADF, 'Closed socket')
-        if self.fail:
+        if self.exception:
             raise socket.error(errno.EPIPE, 'Peer closed connection')
 
     @staticmethod
