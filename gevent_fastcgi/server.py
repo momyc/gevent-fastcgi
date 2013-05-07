@@ -231,7 +231,7 @@ class FastCGIServer(StreamServer):
                     if pid:
                         # master process
                         self.workers.append(pid)
-                    else:
+                    else:  # pragma: nocover
                         # worker
                         del self.workers
                         exit = Event()
@@ -264,10 +264,10 @@ class FastCGIServer(StreamServer):
                 # delete socket file
                 try:
                     os.unlink(self.socket.getsockname())
-                except OSError:
+                except OSError:  # pragma: nocover
                     logger.exception('Failed to remove socket file')
             return super(FastCGIServer, self).kill()
-        else:
+        else:  # pragma: nocover
             os._exit(0)
 
     def handle_connection(self, sock, addr):
@@ -282,7 +282,7 @@ class FastCGIServer(StreamServer):
         for pid in self.workers:
             try:
                 os.kill(pid, signo)
-            except OSError, x:
+            except OSError, x:  # pragma: nocover
                 if x.errno == 3:
                     self.workers.remove(pid)
                 elif x.errno == 10:
@@ -294,7 +294,7 @@ class FastCGIServer(StreamServer):
         for worker in tuple(self.workers):
             try:
                 pid, status = os.waitpid(worker, os.WNOHANG)
-            except OSError, x:
+            except OSError, x:  # pragma: nocover
                 if x.errno == errno.ECHILD:
                     self.workers.remove(worker)
                     continue
