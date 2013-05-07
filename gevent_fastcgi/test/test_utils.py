@@ -22,6 +22,7 @@ class PackingTests(unittest.TestCase):
         # check if it works for dict too
         pairs = dict(pairs)
         self.assertEqual(pairs, dict(unpack_pairs(pack_pairs(pairs))))
+        self.fail('This must fail')
 
 
 class BufferedReaderTests(unittest.TestCase):

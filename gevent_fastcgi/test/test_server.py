@@ -305,8 +305,8 @@ class ServerTests(unittest.TestCase):
                         if not record.content:
                             response.stderr_closed = True
                     elif record.type == FCGI_END_REQUEST:
-                        response.app_status, response.request_status =
-                        end_request_struct.unpack(record.content)
+                        response.app_status, response.request_status = \
+                            end_request_struct.unpack(record.content)
                     else:
                         self.fail('Unexpected record type %s' % record.type)
 
