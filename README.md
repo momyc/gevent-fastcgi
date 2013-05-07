@@ -1,6 +1,6 @@
 #gevent-fastcgi
 
-FastCGI server implementation using **gevent** coroutine-based networking library ( <http://www.gevent.org/>).
+FastCGI server implementation using **gevent** coroutine-based network library ( <http://www.gevent.org/>).
 No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
 Provides simple request handler API to allow for custom request handlers.
