@@ -7,16 +7,16 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-#    The above copyright notice and this permission notice shall be included in
-#    all copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-#    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-#    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-#    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-#    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-#    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-#    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-#    THE SOFTWARE.
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 
 from zope.interface import Interface, Attribute
 
@@ -24,16 +24,21 @@ from zope.interface import Interface, Attribute
 class IConnection(Interface):
 
     def read_record():
-        """ Receive and deserialize next record from peer. Return None if no more records available
+        """
+        Receive and deserialize next record from peer.
+        Return None if no more records available
         """
 
     def write_record(record):
-        """ Serialize and send IRecord instance to peer
+        """
+        Serialize and send IRecord instance to peer
         """
 
     def close():
-        """ Close connection
         """
+        Close connection
+        """
+
 
 class IRequest(Interface):
 
@@ -49,4 +54,3 @@ class IRequestHandler(Interface):
     def __call__(request):
         """ Handle single request
         """
-

@@ -7,45 +7,27 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-#    The above copyright notice and this permission notice shall be included in
-#    all copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-#    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-#    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-#    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-#    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-#    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-#    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-#    THE SOFTWARE.
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 
-import sys
 import logging
-from traceback import format_exc
-from types import StringType, ListType
 from wsgiref.handlers import BaseCGIHandler
-from wsgiref.headers import Headers
 
 from zope.interface import implements
 
 from gevent_fastcgi.interfaces import IRequestHandler
 from gevent_fastcgi.server import FastCGIServer
-from gevent_fastcgi.const import *
 
 
 __all__ = ('WSGIRequestHandler', 'WSGIServer')
-
-
-MANDATORY_WSGI_ENVIRON_VARS = frozenset((
-    'REQUEST_METHOD',
-    'SCRIPT_NAME',
-    'PATH_INFO',
-    'QUERY_STRING',
-    'CONTENT_TYPE',
-    'CONTENT_LENGTH',
-    'SERVER_NAME',
-    'SERVER_PORT',
-    'SERVER_PROTOCOL',
-    ))
 
 
 logger = logging.getLogger(__name__)
@@ -59,7 +41,8 @@ class WSGIRequestHandler(object):
         self.app = app
 
     def __call__(self, request):
-        handler = BaseCGIHandler(request.stdin, request.stdout, request.stderr, request.environ)
+        handler = BaseCGIHandler(
+            request.stdin, request.stdout, request.stderr, request.environ)
         handler.run(self.app)
 
 
@@ -68,4 +51,3 @@ class WSGIServer(FastCGIServer):
     def __init__(self, address, app, **kwargs):
         handler = WSGIRequestHandler(app)
         super(WSGIServer, self).__init__(address, handler, **kwargs)
-

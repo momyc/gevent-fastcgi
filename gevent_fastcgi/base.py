@@ -7,16 +7,16 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-#    The above copyright notice and this permission notice shall be included in
-#    all copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-#    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-#    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-#    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-#    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-#    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-#    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-#    THE SOFTWARE.
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 
 from __future__ import with_statement
 
@@ -25,11 +25,10 @@ import sys
 import logging
 from errno import EPIPE, ECONNRESET
 from tempfile import TemporaryFile
-import struct
 
 try:
     from cStringIO import StringIO
-except ImportError: # pragma: no cover
+except ImportError:  # pragma: no cover
     from StringIO import StringIO
 
 from zope.interface import implements
@@ -37,7 +36,6 @@ from gevent import socket
 from gevent.event import Event
 
 from gevent_fastcgi.interfaces import IConnection
-# all names starting with FCGI_ are defined there
 from gevent_fastcgi.const import *
 
 
@@ -45,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 class Record(object):
-    
+
     __slots__ = ('type', 'content', 'request_id')
 
     def __init__(self, type, content='', request_id=FCGI_NULL_REQUEST_ID):
@@ -56,13 +54,16 @@ class Record(object):
         self.request_id = request_id
 
     def __str__(self):
-        return '<Record %s, req id %s, %d bytes>' % (FCGI_RECORD_TYPES.get(self.type, self.type), self.request_id, len(self.content))
+        return '<Record %s, req id %s, %d bytes>' % (
+            FCGI_RECORD_TYPES.get(self.type, self.type),
+            self.request_id,
+            len(self.content))
 
 
 class Connection(object):
-    
+
     implements(IConnection)
-    
+
     def __init__(self, sock, buffer_size=4096):
         self._sock = sock
         self.buffered_reader = BufferedReader(sock.recv, buffer_size)
@@ -72,41 +73,45 @@ class Connection(object):
         sendall = self._sock.sendall
         content_len = len(record.content)
         if content_len <= 0xffff:
-            header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, content_len, 0)
+            header = header_struct.pack(
+                FCGI_VERSION, record.type, record.request_id, content_len, 0)
             sendall(header + record.content)
         elif record.type in (FCGI_STDIN, FCGI_STDOUT, FCGI_STDERR, FCGI_DATA):
             sent = 0
             content = record.content
             while sent < content_len:
                 chunk_len = min(0xfff8, content_len - sent)
-                header = header_struct.pack(FCGI_VERSION, record.type, record.request_id, chunk_len, 0)
+                header = header_struct.pack(
+                    FCGI_VERSION, record.type, record.request_id, chunk_len, 0)
                 sendall(header + content[sent:sent+chunk_len])
                 sent += chunk_len
         else:
-            msg = 'Record content length %s exceeds maximum of %d' % (content_len, 0xffff)
+            msg = 'Record content length %s exceeds maximum of %d' % (
+                content_len, 0xffff)
             logger.error(msg)
             raise ValueError(msg)
-  
+
     def read_record(self):
         read_bytes = self.buffered_reader.read_bytes
-        
+
         try:
             header = read_bytes(FCGI_RECORD_HEADER_LEN)
         except PartialRead, x:
             if x.partial_data:
                 logger.exception('Partial header received: %s' % x)
                 raise
-            # No error here. Remote side closed connection after sending all records
+            # Remote side closed connection after sending all records
             return None
 
-        version, record_type, request_id, content_len, padding = header_struct.unpack_from(header)
+        version, record_type, request_id, content_len, padding = \
+            header_struct.unpack_from(header)
 
         if content_len:
             content = read_bytes(content_len)
         else:
             content = ''
-        
-        if padding: # pragma: no cover
+
+        if padding:  # pragma: no cover
             read_bytes(padding)
 
         record = Record(record_type, content, request_id)
@@ -129,10 +134,18 @@ class Connection(object):
 class InputStream(object):
     """
     FCGI_STDIN or FCGI_DATA stream.
-    Uses temporary file to store received data after max_mem bytes have been received.
+    Uses temporary file to store received data once max_mem bytes
+    have been received.
     """
 
-    _block = frozenset(('read', 'readline', 'readlines', 'fileno', 'close', 'next'))
+    _block = frozenset((
+        'read',
+        'readline',
+        'readlines',
+        'fileno',
+        'close',
+        'next',
+    ))
 
     def __init__(self, max_mem=1024):
         self.max_mem = max_mem
@@ -153,7 +166,7 @@ class InputStream(object):
             self.landed = True
 
     def feed(self, data):
-        if not data: # EOF mark
+        if not data:  # EOF mark
             self.file.seek(0)
             self.complete.set()
             return
@@ -172,7 +185,7 @@ class InputStream(object):
             self.complete.wait()
             self._flip_attrs()
             return self.__dict__[attr]
-        raise AttributeError, attr
+        raise AttributeError(attr)
 
     def _flip_attrs(self):
         for attr in self._block:
@@ -210,8 +223,10 @@ class OutputStream(object):
 
     def close(self):
         if not self.closed:
-            self.conn.write_record(Record(self.record_type, '', self.request_id))
+            self.conn.write_record(
+                Record(self.record_type, '', self.request_id))
             self.closed = True
+            logger.debug('Closing output stream')
 
 
 class Request(object):
@@ -233,7 +248,7 @@ class Request(object):
 
 try:
     from gevent_fastcgi.speedups import pack_pair, unpack_pairs
-except ImportError: # pragma: no cover
+except ImportError:  # pragma: no cover
     import struct
 
     length_struct = struct.Struct('!L')
@@ -273,6 +288,7 @@ except ImportError: # pragma: no cover
             except (IndexError, struct.error):
                 raise ValueError('Failed to unpack name/value pairs')
 
+
 def pack_pairs(pairs):
     if isinstance(pairs, dict):
         pairs = pairs.iteritems()
@@ -281,10 +297,13 @@ def pack_pairs(pairs):
 
 
 class PartialRead(Exception):
-    """ Raised by buffered_reader when it fails to read requested length of data
+    """ Raised by buffered_reader when it fails to read requested length
+    of data
     """
     def __init__(self, requested_size, partial_data):
-        super(PartialRead, self).__init__('Expected %s but received %s bytes only' % (requested_size, len(partial_data)))
+        super(PartialRead, self).__init__(
+            'Expected %s but received %s bytes only' % (requested_size,
+            len(partial_data)))
         self.requested_size = requested_size
         self.partial_data = partial_data
 
@@ -295,7 +314,7 @@ class BufferedReader(object):
     def __init__(self, read_callable, buffer_size):
         self._reader = _reader_generator(read_callable, buffer_size)
         self.read_bytes = self._reader.send
-        self._reader.next() # advance generator to first yield statement
+        self._reader.next()  # advance generator to first yield statement
 
 
 def _reader_generator(read, buf_size):
@@ -327,5 +346,5 @@ def _reader_generator(read, buf_size):
 
             data = ''.join(chunks)
             chunks = []
-        
+
         size = (yield data)

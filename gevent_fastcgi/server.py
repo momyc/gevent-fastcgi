@@ -7,16 +7,16 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-#    The above copyright notice and this permission notice shall be included in
-#    all copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-#    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-#    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-#    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-#    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-#    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-#    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-#    DEALINGS IN THE SOFTWARE.
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
 
 from __future__ import with_statement
 
@@ -25,7 +25,9 @@ import os
 import logging
 from signal import SIGHUP, SIGCHLD, SIGTERM, SIGINT
 
-from gevent.monkey import patch_os; patch_os()
+from gevent.monkey import patch_os
+patch_os()
+
 from gevent import spawn, socket, signal
 from gevent.server import StreamServer
 from gevent.coros import Semaphore
@@ -33,13 +35,13 @@ from gevent.event import Event
 
 from gevent_fastcgi.const import *
 from gevent_fastcgi.base import (
-        Connection, 
-        Record, 
-        InputStream, 
-        Request, 
-        pack_pairs, 
-        unpack_pairs,
-        )
+    Connection,
+    Record,
+    InputStream,
+    Request,
+    pack_pairs,
+    unpack_pairs,
+)
 
 
 __all__ = ('ServerConnection', 'FastCGIServer')
@@ -52,7 +54,7 @@ EXISTING_REQUEST_REC_TYPES = frozenset((
     FCGI_DATA,
     FCGI_PARAMS,
     FCGI_ABORT_REQUEST,
-    ))
+))
 
 
 class ServerConnection(Connection):
@@ -78,8 +80,8 @@ class ConnectionHandler(object):
         self.keep_open = None
         self.closing = False
 
-    def send_record(self, record_type, content='',
-            request_id=FCGI_NULL_REQUEST_ID):
+    def send_record(
+            self, record_type, content='', request_id=FCGI_NULL_REQUEST_ID):
         self.conn.write_record(Record(record_type, content, request_id))
 
     def fcgi_begin_request(self, record):
@@ -87,8 +89,9 @@ class ConnectionHandler(object):
         if role != self.role:
             self.send_record(FCGI_END_REQUEST, end_request_struct.pack(
                 0,  FCGI_UNKNOWN_ROLE), record.request_id)
-            logger.error('Request role (%s) does not match server role (%s)',
-                    role, self.role)
+            logger.error(
+                'Request role (%s) does not match server role (%s)',
+                role, self.role)
             self.event.set()
         else:
             # Should we check this for every request instead?
@@ -119,9 +122,9 @@ class ConnectionHandler(object):
 
     def fcgi_get_values(self, record):
         pairs = ((name, self.capabilities.get(name)) for name, _ in
-                unpack_pairs(record.content))
+                 unpack_pairs(record.content))
         content = pack_pairs(
-                (name, str(value)) for name, value in pairs if value)
+            (name, str(value)) for name, value in pairs if value)
         self.send_record(FCGI_GET_VALUES_RESULT, content)
         self.event.set()
 
@@ -133,8 +136,8 @@ class ConnectionHandler(object):
             logger.debug('Request handler finished its job')
             if self.requests or (self.keep_open and not reader.ready()):
                 logger.debug(
-                        'Connection left open due to remaining requests '
-                        'or KEEP_CONN flag')
+                    'Connection left open due to remaining requests '
+                    'or KEEP_CONN flag')
                 self.event.clear()
             else:
                 break
@@ -177,7 +180,7 @@ class ConnectionHandler(object):
             else:
                 logger.error('%s: Unknown record type' % record)
                 self.send_record(FCGI_UNKNOWN_TYPE,
-                        unknown_type_struct.pack(record.type))
+                                 unknown_type_struct.pack(record.type))
 
         self.event.set()
 
@@ -191,7 +194,7 @@ class FastCGIServer(StreamServer):
     """
 
     def __init__(self, bind_address, request_handler, role=FCGI_RESPONDER,
-            num_workers=1, buffer_size=1024, max_conns=1024, **kwargs):
+                 num_workers=1, buffer_size=1024, max_conns=1024, **kwargs):
         if isinstance(bind_address, basestring):
             # StreamServer only accepts socket or tuple(address, port) so
             # we need to pre-cook UNIX-socket for it
@@ -200,8 +203,8 @@ class FastCGIServer(StreamServer):
             sock.listen(max_conns)
             bind_address = sock
 
-        super(FastCGIServer, self).__init__(bind_address,
-                self.handle_connection, spawn=max_conns, **kwargs)
+        super(FastCGIServer, self).__init__(
+            bind_address, self.handle_connection, spawn=max_conns, **kwargs)
 
         if role not in (FCGI_RESPONDER, FCGI_FILTER, FCGI_AUTHORIZER):
             raise ValueError('Illegal FastCGI role %s' % role)
@@ -210,10 +213,10 @@ class FastCGIServer(StreamServer):
         self.request_handler = request_handler
         self.buffer_size = buffer_size
         self.capabilities = dict(
-                FCGI_MAX_CONNS=str(max_conns),
-                FCGI_MAX_REQS=str(max_conns * 1024),
-                FCGI_MPXS_CONNS='1',
-                )
+            FCGI_MAX_CONNS=str(max_conns),
+            FCGI_MAX_REQS=str(max_conns * 1024),
+            FCGI_MPXS_CONNS='1',
+        )
 
         assert int(num_workers) >= 1, 'num_workers must be greate than zero'
         self.num_workers = int(num_workers)
@@ -236,10 +239,10 @@ class FastCGIServer(StreamServer):
                         super(FastCGIServer, self).start()
                         while not exit.ready():
                             try:
-                                exit.wait() # wait forever
+                                exit.wait()  # wait forever
                             finally:
                                 os._exit(0)
-                
+
                 # this is used to indicate all workers are dead
                 self._workers_dead = Event()
 
@@ -271,8 +274,8 @@ class FastCGIServer(StreamServer):
         if sock.family in (socket.AF_INET, socket.AF_INET6):
             sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
         conn = ServerConnection(sock, self.buffer_size)
-        handler = ConnectionHandler(conn, self.role, self.capabilities,
-                self.request_handler)
+        handler = ConnectionHandler(
+            conn, self.role, self.capabilities, self.request_handler)
         handler.run()
 
     def _kill_workers(self, signo=SIGHUP):

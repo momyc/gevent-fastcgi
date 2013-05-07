@@ -11,7 +11,7 @@ from gevent_fastcgi.base import (
     unpack_pairs,
     begin_request_struct,
     end_request_struct,
-    )
+)
 from gevent_fastcgi.const import *
 
 
@@ -40,19 +40,23 @@ class Client(object):
         self._conn = Connection(sock, self.buffer_size)
 
     def get_values(self, names, timeout=None):
-        self.send(Record(FCGI_GET_VALUES, pack_pairs(dict.fromkeys(names, ''))))
+        self.send(
+            Record(FCGI_GET_VALUES, pack_pairs(dict.fromkeys(names, ''))))
         record = self.receive()
         if record.type != FCGI_GET_VALUES_RESULT:
-            raise ValueError('Unexpected record type received %s' % record.type)
+            raise ValueError(
+                'Unexpected record type received %s' % record.type)
         return dict(unpack_pairs(record.content))
 
-    def run_request(self, environ, request_id=1, role=FCGI_RESPONDER, stdin=None, data=None, flags=0):
+    def run_request(self, environ, request_id=1, role=FCGI_RESPONDER,
+                    stdin=None, data=None, flags=0):
         """
         Send request and receive response.
         Return tuple (app_status, stdout, stderr)
         """
         map(self.send, (
-            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(role, flags), request_id),
+            Record(FCGI_BEGIN_REQUEST, begin_request_struct.pack(role, flags),
+                   request_id),
             Record(FCGI_PARAMS, pack_pairs(environ), request_id),
             Record(FCGI_PARAMS),
             ))
@@ -78,7 +82,9 @@ class Client(object):
 
     def _send_stream(self, request_id, stream, stream_type):
         if stream is not None:
-            map(self.send, (Record(stream_type, chunk, request_id) for chunk in iter(partial(stream.read, 65535), '')))    
+            map(self.send, (
+                Record(stream_type, chunk, request_id) for chunk in
+                iter(partial(stream.read, 65535), '')))
         self.send(Record(stream_type, '', request_id))
 
     def _receive(self):
@@ -92,9 +98,8 @@ class Client(object):
 
         for waiter in waiters.values():
             waiter.switch(None)
-        
-        waiters.clear()
 
+        waiters.clear()
 
     def _get_response(self, request_id, timeout=None):
         return spawn(self._response_reader, request_id).join(timeout)
@@ -108,5 +113,6 @@ class Client(object):
             elif record.type == FCGI_STDERR:
                 stderr.feed(record.content)
             elif record.type == FCGI_END_REQUEST:
-                app_status, proto_status = end_request_struct.unpack(record.content)
+                app_status, proto_status =
+                end_request_struct.unpack(record.content)
                 return app_status, stdout, stderr

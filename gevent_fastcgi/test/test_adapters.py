@@ -19,4 +19,3 @@ class TestAdapters(unittest.TestCase):
         gevent.sleep(2)
         g.kill()
         g.join()
-

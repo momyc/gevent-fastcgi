@@ -56,7 +56,8 @@ class StreamTests(unittest.TestCase):
         try:
             stdout.write('')
         except socket.error:
-            self.fail('Writing empty string to output stream caused write_record call')
+            self.fail('Writing empty string to output stream caused '
+                      'write_record call')
         sock.fail = False
 
         stdout.close()
@@ -117,4 +118,3 @@ class ConnectionTests(unittest.TestCase):
         conn = Connection(sock)
         with self.assertRaises(PartialRead):
             conn.read_record()
-

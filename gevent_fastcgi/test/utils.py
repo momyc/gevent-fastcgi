@@ -6,7 +6,12 @@ from functools import wraps
 import logging
 from zope.interface import implements
 from gevent import socket, sleep, signal
-from gevent_fastcgi.const import FCGI_RESPONDER, FCGI_MAX_CONNS, FCGI_MAX_REQS, FCGI_MPXS_CONNS
+from gevent_fastcgi.const import (
+    FCGI_RESPONDER,
+    FCGI_MAX_CONNS,
+    FCGI_MAX_REQS,
+    FCGI_MPXS_CONNS,
+)
 from gevent_fastcgi.base import Record, Connection, pack_pairs
 from gevent_fastcgi.wsgi import WSGIServer
 
@@ -24,7 +29,7 @@ def pack_env(**vars):
         'SERVER_NAME': '127.0.0.1',
         'SERVER_PORT': '80',
         'SERVER_PROTOCOL': 'HTTP/1.0',
-        }
+    }
     if vars:
         env.update(vars)
     return pack_pairs(env)
@@ -38,7 +43,8 @@ def some_delay(delay=None):
 
 class WSGIApplication(object):
 
-    def __init__(self, response=None, response_headers=None, exception=None, delay=None, slow=False):
+    def __init__(self, response=None, response_headers=None, exception=None,
+                 delay=None, slow=False):
         self.exception = exception
         self.response = response
         self.response_headers = response_headers
@@ -57,7 +63,8 @@ class WSGIApplication(object):
             stderr.flush()
             raise self.exception
 
-        headers = (self.response_headers is None) and [('Conent-Type', 'text/plain')] or self.response_headers
+        headers = (self.response_headers is None) and
+        [('Conent-Type', 'text/plain')] or self.response_headers
 
         start_response('200 OK', headers)
 
@@ -111,45 +118,25 @@ class make_connection(object):
 class wsgi_server(object):
     """ Wrapper around server to ensure it's stopped
     """
-    def __init__(self, address=None, app=None, fork=False, **kw):
-        self.address = address is None and ('127.0.0.1', randint(1024, 65535)) or address
+    def __init__(self, address=None, app=None, **kw):
+        self.address = address is None and
+        ('127.0.0.1', randint(1024, 65535)) or address
         self.app = app is None and WSGIApplication() or app
-        self.fork = fork
         self.kw = kw
 
     def __enter__(self):
-        if self.fork:
-            pid = os.fork()
-            if pid:
-                self.pid = pid
-                sleep(1)
-            else:
-                server = WSGIServer(self.address, self.app, **self.kw)
-                signal(15, server.stop)
-                server.serve_forever()
-                sys.exit()
-        else:
-            self.server = WSGIServer(self.address, self.app, **self.kw)
-            self.server.start()
+        self.server = WSGIServer(self.address, self.app, **self.kw)
+        self.server.start()
+        if not hasattr(self.server, 'workers'):
+            sys.exit()
         return self
-        
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.fork:
-            if hasattr(self, 'pid'):
-                self._kill()
-        else:
-            self.server.stop()
+        self.server.stop()
 
     def __getattr__(self, attr):
         return getattr(self.server, attr)
 
-    def _kill(self):
-        try:
-            os.kill(self.pid, 15)
-        finally:
-            os.waitpid(self.pid, 0)
-    
 
 def check_socket(callable):
     @wraps(callable)
@@ -211,7 +198,8 @@ class MockSocket(object):
 
 class MockServer(object):
 
-    def __init__(self, role=FCGI_RESPONDER, max_conns=1024, app=None, response='OK'):
+    def __init__(self, role=FCGI_RESPONDER, max_conns=1024, app=None,
+                 response='OK'):
         self.role = role
         self.max_conns = max_conns
         self.app = (app is None) and WSGIApplication() or app
@@ -245,5 +233,5 @@ class Response(object):
     @property
     def headers(slef):
         headers = response.split('\r\n\r\n', 1)[0]
-        return dict([header.split(': ', 1) for header in headers.split('\r\n')])
-
+        return dict(
+            [header.split(': ', 1) for header in headers.split('\r\n')])

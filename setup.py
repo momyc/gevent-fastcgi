@@ -4,13 +4,15 @@ from setuptools import setup, Extension, find_packages
 setup(
     name='gevent-fastcgi',
     version='0.1.17dev',
-    description='FastCGI/WSGI client and server implemented using gevent library',
+    description='''FastCGI/WSGI client and server implemented using gevent
+    library''',
     long_description='''
-    FastCGI/WSGI server implementation using gevent library. No need to monkeypatch and
-    slow down your favourite FastCGI server in order to make it "green".
+    FastCGI/WSGI server implementation using gevent library. No need to
+    monkeypatch and slow down your favourite FastCGI server in order to make
+    it "green".
 
-    Supports connection multiplexing. Out-of-the-box support for Django and frameworks
-    that use PasteDeploy including Pylons and Pyramid.
+    Supports connection multiplexing. Out-of-the-box support for Django and
+    frameworks that use PasteDeploy including Pylons and Pyramid.
     ''',
     keywords='fastcgi gevent wsgi',
     author='Alexander Kulakov',
@@ -23,8 +25,12 @@ setup(
         "gevent>=0.13.6"
     ],
     entry_points={
-       'paste.server_runner': ['wsgi = gevent_fastcgi.adapters.paste_deploy:wsgi_server'],
+        'paste.server_runner': [
+            'wsgi = gevent_fastcgi.adapters.paste_deploy:wsgi_server',
+        ],
     },
     test_suite="gevent_fastcgi.test",
-    ext_modules=[Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c'])],
+    ext_modules=[
+        Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c']),
+    ],
 )
