@@ -63,8 +63,8 @@ class WSGIApplication(object):
             stderr.flush()
             raise self.exception
 
-        headers = (self.response_headers is None) and \
-            [('Conent-Type', 'text/plain')] or self.response_headers
+        headers = (self.response_headers is None) and
+        [('Conent-Type', 'text/plain')] or self.response_headers
 
         start_response('200 OK', headers)
 
@@ -119,8 +119,8 @@ class wsgi_server(object):
     """ Wrapper around server to ensure it's stopped
     """
     def __init__(self, address=None, app=None, **kw):
-        self.address = address is None and \
-            ('127.0.0.1', randint(1024, 65535)) or address
+        self.address = address is None and
+        ('127.0.0.1', randint(1024, 65535)) or address
         self.app = app is None and WSGIApplication() or app
         self.kw = kw
 
