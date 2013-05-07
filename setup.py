@@ -3,7 +3,7 @@ from setuptools import setup, Extension, find_packages
 
 setup(
     name='gevent-fastcgi',
-    version='0.1.16.1dev',
+    version='0.1.17dev',
     description='FastCGI/WSGI client and server implemented using gevent library',
     long_description='''
     FastCGI/WSGI server implementation using gevent library. No need to monkeypatch and
