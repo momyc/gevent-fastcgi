@@ -1,7 +1,5 @@
 import unittest
 
-from gevent_fastcgi.test.utils import MockSocket
-
 
 class PackingTests(unittest.TestCase):
 
