@@ -18,12 +18,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-"""
-FastCGI/WSGI server and client implemented using gevent library.
-Supports connection multiplexing. Contains paste.server_runner entry point.
-"""
 
 import logging
 
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
+if not logger.handlers:
+    logger.addHandler(logging.NullHandler())

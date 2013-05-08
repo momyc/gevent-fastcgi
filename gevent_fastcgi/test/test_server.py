@@ -3,11 +3,32 @@ from __future__ import absolute_import
 import os
 import unittest
 
-from gevent_fastcgi.const import *
-from gevent_fastcgi.base import (
-    Record,
+from gevent_fastcgi.const import (
+    FCGI_ABORT_REQUEST,
+    FCGI_AUTHORIZER,
+    FCGI_BEGIN_REQUEST,
+    FCGI_DATA,
+    FCGI_END_REQUEST,
+    FCGI_FILTER,
+    FCGI_GET_VALUES,
+    FCGI_GET_VALUES_RESULT,
+    FCGI_KEEP_CONN,
+    FCGI_MAX_CONNS,
+    FCGI_MAX_REQS,
+    FCGI_MPXS_CONNS,
+    FCGI_PARAMS,
+    FCGI_REQUEST_COMPLETE,
+    FCGI_RESPONDER,
+    FCGI_STDERR,
+    FCGI_STDIN,
+    FCGI_STDOUT,
+    FCGI_UNKNOWN_ROLE,
+    FCGI_UNKNOWN_TYPE,
     begin_request_struct,
     end_request_struct,
+)
+from gevent_fastcgi.base import (
+    Record,
     pack_pairs,
     unpack_pairs,
 )

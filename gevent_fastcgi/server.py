@@ -20,10 +20,10 @@
 
 from __future__ import with_statement
 
-import sys
 import os
+import errno
 import logging
-from signal import SIGHUP, SIGCHLD, SIGTERM, SIGINT
+from signal import SIGHUP, SIGCHLD
 
 from gevent.monkey import patch_os
 patch_os()
@@ -33,7 +33,27 @@ from gevent.server import StreamServer
 from gevent.coros import Semaphore
 from gevent.event import Event
 
-from gevent_fastcgi.const import *
+from gevent_fastcgi.const import (
+    FCGI_ABORT_REQUEST,
+    FCGI_AUTHORIZER,
+    FCGI_BEGIN_REQUEST,
+    FCGI_DATA,
+    FCGI_END_REQUEST,
+    FCGI_FILTER,
+    FCGI_GET_VALUES,
+    FCGI_GET_VALUES_RESULT,
+    FCGI_KEEP_CONN,
+    FCGI_NULL_REQUEST_ID,
+    FCGI_PARAMS,
+    FCGI_REQUEST_COMPLETE,
+    FCGI_RESPONDER,
+    FCGI_STDIN,
+    FCGI_UNKNOWN_ROLE,
+    FCGI_UNKNOWN_TYPE,
+    begin_request_struct,
+    end_request_struct,
+    unknown_type_struct,
+)
 from gevent_fastcgi.base import (
     Connection,
     Record,
@@ -159,23 +179,7 @@ class ConnectionHandler(object):
     def _reader(self):
         for record in self.conn:
             if record.type in EXISTING_REQUEST_REC_TYPES:
-                request = self.requests.get(record.request_id)
-                if not request:
-                    logger.error('%s for non-existent request' % record)
-                elif record.type == FCGI_STDIN:
-                    request.stdin.feed(record.content)
-                    if not record.content and request.role == FCGI_RESPONDER:
-                        request.greenlet = self._spawn(self._handle_request,
-                                                       request)
-                elif record.type == FCGI_DATA:
-                    request.data.feed(record.content)
-                    if not record.content and request.role == FCGI_FILTER:
-                        request.greenlet = self._spawn(self._handle_request,
-                                                       request)
-                elif record.type == FCGI_PARAMS:
-                    self.fcgi_params(record, request)
-                elif record.type == FCGI_ABORT_REQUEST:
-                    self.fcgi_abort_request(record, request)
+                self._handle_request_record(record)
             elif record.type == FCGI_BEGIN_REQUEST:
                 self.fcgi_begin_request(record)
             elif record.type == FCGI_GET_VALUES:
@@ -184,6 +188,24 @@ class ConnectionHandler(object):
                 logger.error('%s: Unknown record type' % record)
                 self.send_record(FCGI_UNKNOWN_TYPE,
                                  unknown_type_struct.pack(record.type))
+
+    def _handle_request_record(self, record):
+        request = self.requests.get(record.request_id)
+
+        if not request:
+            logger.error('%s for non-existent request' % record)
+        elif record.type == FCGI_STDIN:
+            request.stdin.feed(record.content)
+            if not record.content and request.role == FCGI_RESPONDER:
+                request.greenlet = self._spawn(self._handle_request, request)
+        elif record.type == FCGI_DATA:
+            request.data.feed(record.content)
+            if not record.content and request.role == FCGI_FILTER:
+                request.greenlet = self._spawn(self._handle_request, request)
+        elif record.type == FCGI_PARAMS:
+            self.fcgi_params(record, request)
+        elif record.type == FCGI_ABORT_REQUEST:
+            self.fcgi_abort_request(record, request)
 
     def _spawn(self, callable, *args, **kwargs):
         g = spawn(callable, *args, **kwargs)

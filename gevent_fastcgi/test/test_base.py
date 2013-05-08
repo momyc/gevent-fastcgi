@@ -2,7 +2,13 @@ import unittest
 import socket
 import random
 import string
-from gevent_fastcgi.const import *
+from gevent_fastcgi.const import (
+    FCGI_GET_VALUES,
+    FCGI_HEADER_LEN,
+    FCGI_STDERR,
+    FCGI_STDIN,
+    FCGI_STDOUT,
+)
 
 
 def random_data(size, source=map(chr, xrange(256))):

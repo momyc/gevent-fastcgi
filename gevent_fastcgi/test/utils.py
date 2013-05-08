@@ -86,7 +86,7 @@ class WSGIApplication(object):
 class TestingConnection(Connection):
 
     def write_record(self, record):
-        if isinstance(record, (int, float)):
+        if isinstance(record, (int, long, float)):
             sleep(record)
         else:
             super(TestingConnection, self).write_record(record)

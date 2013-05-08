@@ -1,18 +1,32 @@
 from collections import defaultdict
 from functools import partial
 
-from gevent import socket, Timeout
+from gevent import socket, spawn, Timeout
 from gevent.event import AsyncResult
 
 from gevent_fastcgi.base import (
-    Record, Connection,
+    Record,
+    Connection,
     Request,
     pack_pairs,
     unpack_pairs,
+)
+from gevent_fastcgi.const import (
+    FCGI_BEGIN_REQUEST,
+    FCGI_DATA,
+    FCGI_END_REQUEST,
+    FCGI_FILTER,
+    FCGI_GET_VALUES,
+    FCGI_GET_VALUES_RESULT,
+    FCGI_NULL_REQUEST_ID,
+    FCGI_PARAMS,
+    FCGI_RESPONDER,
+    FCGI_STDERR,
+    FCGI_STDIN,
+    FCGI_STDOUT,
     begin_request_struct,
     end_request_struct,
 )
-from gevent_fastcgi.const import *
 
 
 class Client(object):
@@ -113,6 +127,6 @@ class Client(object):
             elif record.type == FCGI_STDERR:
                 stderr.feed(record.content)
             elif record.type == FCGI_END_REQUEST:
-                app_status, proto_status =
-                end_request_struct.unpack(record.content)
+                app_status, proto_status = end_request_struct.unpack(
+                    record.content)
                 return app_status, stdout, stderr

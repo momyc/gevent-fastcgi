@@ -36,8 +36,20 @@ from gevent import socket
 from gevent.event import Event
 
 from gevent_fastcgi.interfaces import IConnection
-from gevent_fastcgi.const import *
-
+from gevent_fastcgi.const import (
+    FCGI_VERSION,
+    FCGI_STDIN,
+    FCGI_STDOUT,
+    FCGI_STDERR,
+    FCGI_DATA,
+    FCGI_NULL_REQUEST_ID,
+    FCGI_RECORD_HEADER_LEN,
+    FCGI_RECORD_TYPES,
+    begin_request_struct,
+    end_request_struct,
+    header_struct,
+    unknown_type_struct,
+)
 
 logger = logging.getLogger(__name__)
 
