@@ -24,7 +24,7 @@ import os
 import sys
 import logging
 from errno import EPIPE, ECONNRESET
-from tempfile import TemporaryFile
+from tempfile import SpooledTemporaryFile
 
 try:
     from cStringIO import StringIO
@@ -137,60 +137,31 @@ class InputStream(object):
     Uses temporary file to store received data once max_mem bytes
     have been received.
     """
-
-    _block = frozenset((
-        'read',
-        'readline',
-        'readlines',
-        'fileno',
-        'close',
-        'next',
-    ))
-
     def __init__(self, max_mem=1024):
-        self.max_mem = max_mem
-        self.landed = False
-        self.file = StringIO()
-        self.len = 0
-        self.complete = Event()
-
-    def land(self):
-        """
-        Switch from using in-memory to disk-file storage
-        """
-        if not self.landed:
-            tmp_file = TemporaryFile()
-            tmp_file.write(self.file.getvalue())
-            self.file = tmp_file
-            self.file.seek(0, 2)
-            self.landed = True
+        self._file = SpooledTemporaryFile(max_mem)
+        self._complete = Event()
 
     def feed(self, data):
+        if self._complete.is_set():
+            raise IOError('Feeding file beyond EOF mark')
         if not data:  # EOF mark
-            self.file.seek(0)
-            self.complete.set()
+            self._file.seek(0)
+            self._complete.set()
             return
-        self.len += len(data)
-        if not self.landed and self.len > self.max_mem:
-            self.land()
-        self.file.write(data)
+        self._file.write(data)
 
     def __iter__(self):
-        self.complete.wait()
-        return self.file
+        self._complete.wait()
+        return iter(self._file)
 
-    def __getattr__(self, attr):
-        # Block until all data is received
-        if attr in self._block:
-            self.complete.wait()
-            self._flip_attrs()
-            return self.__dict__[attr]
-        raise AttributeError(attr)
+    def read(self, size=-1):
+        self._complete.wait()
+        return self._file.read(size)
 
-    def _flip_attrs(self):
-        for attr in self._block:
-            if hasattr(self.file, attr):
-                setattr(self, attr, getattr(self.file, attr))
+    def readlines(self, sizehint=0):
+        self._complete.wait()
+        return self._file.readlines(sizehint)
+
 
 
 class OutputStream(object):
