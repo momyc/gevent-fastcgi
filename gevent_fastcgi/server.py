@@ -79,6 +79,7 @@ class ConnectionHandler(object):
         self.requests = {}
         self.keep_open = None
         self.closing = False
+        self._event = Event()
 
     def send_record(
             self, record_type, content='', request_id=FCGI_NULL_REQUEST_ID):
@@ -92,7 +93,7 @@ class ConnectionHandler(object):
             logger.error(
                 'Request role (%s) does not match server role (%s)',
                 role, self.role)
-            self.event.set()
+            self._notify()
         else:
             # Should we check this for every request instead?
             if self.keep_open is None:
@@ -109,15 +110,14 @@ class ConnectionHandler(object):
             request.environ.update(unpack_pairs(''.join(request.environ_list)))
             del request.environ_list
             if request.role == FCGI_AUTHORIZER:
-                request.greenlet = spawn(self._handle_request, request)
+                request.greenlet = self._spawn(self._handle_request, request)
 
     def fcgi_abort_request(self, record, request):
         greenlet = request.greenlet
-        if not (greenlet is None or greenlet.ready()):
-            request.greenlet.kill()
         if request.id in self.requests:
             del self.requests[request.id]
-            self.event.set()
+        if not (greenlet is None or greenlet.ready()):
+            request.greenlet.kill()
         logger.warn('Request %s aborted' % request.id)
 
     def fcgi_get_values(self, record):
@@ -126,22 +126,23 @@ class ConnectionHandler(object):
         content = pack_pairs(
             (name, str(value)) for name, value in pairs if value)
         self.send_record(FCGI_GET_VALUES_RESULT, content)
-        self.event.set()
+        self._notify()
 
     def run(self):
-        self.event = Event()
-        reader = spawn(self._reader)
+        reader = self._spawn(self._reader)
         while 1:
-            self.event.wait()
-            logger.debug('Request handler finished its job')
-            if self.requests or (self.keep_open and not reader.ready()):
-                logger.debug(
-                    'Connection left open due to remaining requests '
-                    'or KEEP_CONN flag')
-                self.event.clear()
+            self._event.wait()
+            self._event.clear()
+            logger.debug('Some greenlet has finished its job')
+            if self.requests:
+                logger.debug('Connection left open due to active requests')
+            elif self.keep_open and not reader.ready():
+                logger.debug('Connection left open due to KEEP_CONN flag')
             else:
                 break
+
         logger.debug('Closing connection')
+        # reader will stop too once we close connection
         self.conn.close()
 
     def _handle_request(self, request):
@@ -152,8 +153,8 @@ class ConnectionHandler(object):
         finally:
             self.send_record(FCGI_END_REQUEST, end_request_struct.pack(
                 1, FCGI_REQUEST_COMPLETE), request.id)
-            del self.requests[request.id]
-            self.event.set()
+            self.requests.pop(request.id, None)
+            self._notify()
 
     def _reader(self):
         for record in self.conn:
@@ -163,12 +164,12 @@ class ConnectionHandler(object):
                     logger.error('%s for non-existent request' % record)
                 elif record.type == FCGI_STDIN:
                     request.stdin.feed(record.content)
-                    if record.content == '' and request.role == FCGI_RESPONDER:
-                        request.greenlet = spawn(self._handle_request, request)
+                    if not record.content and request.role == FCGI_RESPONDER:
+                        request.greenlet = self._spawn(self._handle_request, request)
                 elif record.type == FCGI_DATA:
                     request.data.feed(record.content)
-                    if record.content == '' and request.role == FCGI_FILTER:
-                        request.greenlet = spawn(self._handle_request, request)
+                    if not record.content and request.role == FCGI_FILTER:
+                        request.greenlet = self._spawn(self._handle_request, request)
                 elif record.type == FCGI_PARAMS:
                     self.fcgi_params(record, request)
                 elif record.type == FCGI_ABORT_REQUEST:
@@ -182,7 +183,13 @@ class ConnectionHandler(object):
                 self.send_record(FCGI_UNKNOWN_TYPE,
                                  unknown_type_struct.pack(record.type))
 
-        self.event.set()
+    def _spawn(self, callable, *args, **kwargs):
+        g = spawn(callable, *args, **kwargs)
+        g.link(self._notify)
+        return g
+
+    def _notify(self, source=None):
+        self._event.set()
 
 
 class FastCGIServer(StreamServer):
@@ -225,6 +232,7 @@ class FastCGIServer(StreamServer):
     def start(self):
         if not self.started:
             if self.num_workers > 1:
+                logger.debug('Forking %s workers' % self.num_workers)
                 self.pre_start()
                 for _ in range(self.num_workers):
                     pid = os.fork()
