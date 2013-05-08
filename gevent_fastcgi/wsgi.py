@@ -41,9 +41,21 @@ class WSGIRequestHandler(object):
         self.app = app
 
     def __call__(self, request):
-        handler = BaseCGIHandler(
-            request.stdin, request.stdout, request.stderr, request.environ)
+        handler = self.CGIHandler(request)
         handler.run(self.app)
+
+    class CGIHandler(BaseCGIHandler):
+
+        def __init__(self, request):
+            BaseCGIHandler.__init__(self, request.stdin, request.stdout,
+                                    request.stderr, request.environ)
+
+        def log_exception(self, exc_info):
+            logger.exception('WSGI application failed')
+
+        def error_output(self, environ, start_response):
+            start_response('500 Internal Server Error', [('Content-type', 'text/plain')])
+            yield ''
 
 
 class WSGIServer(FastCGIServer):
