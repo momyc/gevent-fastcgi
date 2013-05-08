@@ -54,7 +54,9 @@ class WSGIRequestHandler(object):
             logger.exception('WSGI application failed')
 
         def error_output(self, environ, start_response):
-            start_response('500 Internal Server Error', [('Content-type', 'text/plain')])
+            start_response('500 Internal Server Error', [
+                ('Content-type', 'text/plain'),
+            ])
             yield ''
 
 

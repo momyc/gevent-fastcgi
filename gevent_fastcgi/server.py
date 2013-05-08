@@ -165,11 +165,13 @@ class ConnectionHandler(object):
                 elif record.type == FCGI_STDIN:
                     request.stdin.feed(record.content)
                     if not record.content and request.role == FCGI_RESPONDER:
-                        request.greenlet = self._spawn(self._handle_request, request)
+                        request.greenlet = self._spawn(self._handle_request,
+                                                       request)
                 elif record.type == FCGI_DATA:
                     request.data.feed(record.content)
                     if not record.content and request.role == FCGI_FILTER:
-                        request.greenlet = self._spawn(self._handle_request, request)
+                        request.greenlet = self._spawn(self._handle_request,
+                                                       request)
                 elif record.type == FCGI_PARAMS:
                     self.fcgi_params(record, request)
                 elif record.type == FCGI_ABORT_REQUEST:

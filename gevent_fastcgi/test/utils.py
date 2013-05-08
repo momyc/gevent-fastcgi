@@ -1,18 +1,16 @@
-import sys
-import os
 import errno
 from random import random, randint
 from functools import wraps
+from contextlib import contextmanager
 import logging
-from zope.interface import implements
-from gevent import socket, sleep, signal
+from gevent import socket, sleep
 from gevent_fastcgi.const import (
     FCGI_RESPONDER,
     FCGI_MAX_CONNS,
     FCGI_MAX_REQS,
     FCGI_MPXS_CONNS,
 )
-from gevent_fastcgi.base import Record, Connection, pack_pairs
+from gevent_fastcgi.base import Connection, InputStream, pack_pairs
 from gevent_fastcgi.wsgi import WSGIServer
 
 
@@ -58,9 +56,6 @@ class WSGIApplication(object):
             some_delay(self.delay)
 
         if self.exception is not None:
-            stderr = environ['wsgi.errors']
-            stderr.write(str(self.exception))
-            stderr.flush()
             raise self.exception
 
         headers = ((self.response_headers is None)
@@ -91,53 +86,37 @@ class WSGIApplication(object):
 class TestingConnection(Connection):
 
     def write_record(self, record):
-        if isinstance(record, Record):
+        if isinstance(record, (int, float)):
+            sleep(record)
+        else:
             super(TestingConnection, self).write_record(record)
-        else:
-            sleep(float(record))
 
 
-class make_connection(object):
-
-    def __init__(self, address):
-        self.address = address
-
-    def __enter__(self):
-        if isinstance(self.address, basestring):
-            af = socket.AF_UNIX
-        else:
-            af = socket.AF_INET
-        sock = socket.socket(af, socket.SOCK_STREAM)
-        sock.connect(self.address)
-        self.conn = TestingConnection(sock)
-        return self.conn
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.conn.close()
+@contextmanager
+def make_connection(address):
+    af = isinstance(address, basestring) and socket.AF_UNIX or socket.AF_INET
+    sock = socket.socket(af, socket.SOCK_STREAM)
+    try:
+        sock.connect(address)
+        conn = TestingConnection(sock)
+        yield conn
+    finally:
+        sock.close()
 
 
-class wsgi_server(object):
-    """ Wrapper around server to ensure it's stopped
-    """
-    def __init__(self, address=None, app=None, **kw):
-        self.address = (address is None
-                        and ('127.0.0.1', randint(1024, 65535))
-                        or address)
-        self.app = app is None and WSGIApplication() or app
-        self.kw = kw
+@contextmanager
+def start_wsgi_server(address=None, app=None, **kw):
+    if address is None:
+        address = ('127.0.0.1', randint(1024, 65535))
+    if app is None:
+        app = WSGIApplication()
 
-    def __enter__(self):
-        self.server = WSGIServer(self.address, self.app, **self.kw)
-        self.server.start()
-        if not hasattr(self.server, 'workers'):
-            sys.exit()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.server.stop()
-
-    def __getattr__(self, attr):
-        return getattr(self.server, attr)
+    server = WSGIServer(address, app, **kw)
+    server.start()
+    try:
+        yield server
+    finally:
+        server.stop()
 
 
 def check_socket(callable):
@@ -221,19 +200,13 @@ class Response(object):
 
     def __init__(self, request_id):
         self.request_id = request_id
-        self.stdout = None
-        self.stdout_closed = False
-        self.stderr = None
-        self.stderr_closed = False
+        self.stdout = InputStream()
+        self.stderr = InputStream()
         self.request_status = None
         self.app_status = None
 
-    @property
-    def body(self):
-        return self.stdout.split('\r\n\r\n', 1)[1]
-
-    @property
-    def headers(slef):
-        headers = response.split('\r\n\r\n', 1)[0]
-        return dict(
-            [header.split(': ', 1) for header in headers.split('\r\n')])
+    def parse(self):
+        headers, body = self.stdout.read().split('\r\n\r\n', 1)
+        headers = dict(
+            header.split(': ', 1) for header in headers.split('\r\n'))
+        return headers, body

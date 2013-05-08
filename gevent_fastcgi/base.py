@@ -139,29 +139,32 @@ class InputStream(object):
     """
     def __init__(self, max_mem=1024):
         self._file = SpooledTemporaryFile(max_mem)
-        self._complete = Event()
+        self._eof_received = Event()
 
     def feed(self, data):
-        if self._complete.is_set():
+        if self.eof_received:
             raise IOError('Feeding file beyond EOF mark')
         if not data:  # EOF mark
             self._file.seek(0)
-            self._complete.set()
+            self._eof_received.set()
             return
         self._file.write(data)
 
     def __iter__(self):
-        self._complete.wait()
+        self._eof_received.wait()
         return iter(self._file)
 
     def read(self, size=-1):
-        self._complete.wait()
+        self._eof_received.wait()
         return self._file.read(size)
 
     def readlines(self, sizehint=0):
-        self._complete.wait()
+        self._eof_received.wait()
         return self._file.readlines(sizehint)
 
+    @property
+    def eof_received(self):
+        return self._eof_received.is_set()
 
 
 class OutputStream(object):
