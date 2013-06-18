@@ -1,10 +1,16 @@
 import os
+import sys
 from setuptools import setup, Extension, find_packages
 import logging.config
 
 
 logging.config.fileConfig('logging.ini')
 
+ext_modules = []
+# C speedups are no good for PyPy
+if '__pypy__' not in sys.builtin_module_names:
+    ext_modules.append(
+        Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c']))
 
 setup(
     name='gevent-fastcgi',
@@ -38,7 +44,5 @@ setup(
         ],
     },
     test_suite="gevent_fastcgi.test",
-    ext_modules=[
-        Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c']),
-    ],
+    ext_modules=ext_modules
 )
