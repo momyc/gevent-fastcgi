@@ -43,23 +43,23 @@ server.serve_forever()
 ```
 ### PasteDeploy
 
-Gevent-fastcgi defines three `paste.server_runner' entry points. Each of them will run FastCGIServer with different request
+Gevent-fastcgi defines three `paste.server_runner` entry points. Each of them will run FastCGIServer with different request
 handler implementation:
 
 + *wsgi*
 
-	`gevent_fastcgi.wsgi.WSGIRequestHandler' will be used to handle requests.
+	`gevent_fastcgi.wsgi.WSGIRequestHandler` will be used to handle requests.
 	Application is expected to be a WSGI-application.
 
 + *wsgiref*
 
-	`gevent_fastcgi.wsgi.WSGIRefRequestHandler' which uses standard `wsgiref.handlers'.
+	`gevent_fastcgi.wsgi.WSGIRefRequestHandler` which uses standard `wsgiref.handlers`.
 	Application is expected to be a WSGI-application.
 
 + *fastcgi*
 
-	Application is expected to implement `gevent_fastcgi.interfaces.IRequestHandler' interface.
-	It should use `request.stdin' to receive request body and `request.stdout' and/or `request.stderr' to send
+	Application is expected to implement `gevent_fastcgi.interfaces.IRequestHandler` interface.
+	It should use `request.stdin` to receive request body and `request.stdout` and/or `request.stderr` to send
 	response back to Web-server.
 
 
@@ -93,7 +93,7 @@ num_workers = 8
 ```
 ### Django
 
-Add "gevent_fastcgi.adapters.django" to INSTALLED_APPS of settings.py then run the following command (replace host:port with desired values)
+Add `gevent_fastcgi.adapters.django` to INSTALLED_APPS of settings.py then run the following command (replace host:port with desired values)
 ```
 python manage.py run_gevent_fastcgi host:port
 ```
