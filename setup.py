@@ -28,7 +28,7 @@ setup(
     license='MIT',
     install_requires=[
         "zope.interface",
-        "gevent>=0.13.6"
+        "gevent>=0.13.6",
     ],
     entry_points={
         'paste.server_runner': [
