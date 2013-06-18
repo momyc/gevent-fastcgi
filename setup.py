@@ -1,9 +1,14 @@
+import os
 from setuptools import setup, Extension, find_packages
+import logging.config
+
+
+logging.config.fileConfig('logging.ini')
 
 
 setup(
     name='gevent-fastcgi',
-    version='0.1.17dev',
+    version='0.1.18dev',
     description='''FastCGI/WSGI client and server implemented using gevent
     library''',
     long_description='''
@@ -16,17 +21,20 @@ setup(
     ''',
     keywords='fastcgi gevent wsgi',
     author='Alexander Kulakov',
-    author_email='a.kulakov@mail.ru',
+    author_email='homo.programmerus@gmail.com',
     url='http://github.com/momyc/gevent-fastcgi',
     packages=find_packages(exclude=('gevent_fastcgi.tests.*',)),
     zip_safe=True,
     license='MIT',
     install_requires=[
+        "zope.interface",
         "gevent>=0.13.6"
     ],
     entry_points={
         'paste.server_runner': [
-            'wsgi = gevent_fastcgi.adapters.paste_deploy:wsgi_server',
+            'fastcgi = gevent_fastcgi.adapters.paste_deploy:fastcgi_server_runner',
+            'wsgi = gevent_fastcgi.adapters.paste_deploy:wsgi_server_runner',
+            'wsgiref = gevent_fastcgi.adapters.paste_deploy:wsgiref_server_runner',
         ],
     },
     test_suite="gevent_fastcgi.test",

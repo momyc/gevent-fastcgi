@@ -18,22 +18,25 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from __future__ import with_statement
-
-import os
-import errno
-import logging
-from signal import SIGHUP, SIGCHLD
+from __future__ import with_statement, absolute_import
 
 from gevent.monkey import patch_os
 patch_os()
 
-from gevent import spawn, socket, signal
-from gevent.server import StreamServer
-from gevent.coros import Semaphore
-from gevent.event import Event
+import os
+import errno
+import logging
+from signal import SIGHUP, SIGINT, SIGQUIT, SIGKILL
 
-from gevent_fastcgi.const import (
+from zope.interface import implements
+
+from gevent import sleep, spawn, socket, signal, getcurrent
+from gevent.server import StreamServer
+from gevent.event import Event
+from gevent.coros import Semaphore
+
+from .interfaces import IRequest
+from .const import (
     FCGI_ABORT_REQUEST,
     FCGI_AUTHORIZER,
     FCGI_BEGIN_REQUEST,
@@ -48,50 +51,71 @@ from gevent_fastcgi.const import (
     FCGI_REQUEST_COMPLETE,
     FCGI_RESPONDER,
     FCGI_STDIN,
+    FCGI_STDOUT,
+    FCGI_STDERR,
+    FCGI_DATA,
     FCGI_UNKNOWN_ROLE,
     FCGI_UNKNOWN_TYPE,
-    begin_request_struct,
-    end_request_struct,
-    unknown_type_struct,
+    EXISTING_REQUEST_RECORD_TYPES,
 )
-from gevent_fastcgi.base import (
+from .base import (
     Connection,
     Record,
     InputStream,
-    Request,
+    OutputStream,
+)
+from .utils import (
     pack_pairs,
     unpack_pairs,
+    pack_begin_request,
+    unpack_begin_request,
+    pack_end_request,
+    unpack_end_request,
+    pack_unknown_type,
 )
 
 
-__all__ = ('ServerConnection', 'FastCGIServer')
+__all__ = ('Request', 'ServerConnection', 'FastCGIServer')
 
 logger = logging.getLogger(__name__)
 
 
-EXISTING_REQUEST_REC_TYPES = frozenset((
-    FCGI_STDIN,
-    FCGI_DATA,
-    FCGI_PARAMS,
-    FCGI_ABORT_REQUEST,
-))
+class Request(object):
+
+    implements(IRequest)
+
+    def __init__(self, conn, request_id, role):
+        self.conn = conn
+        self.id = request_id
+        self.role = role
+        self.environ = {}
+        self.stdin = InputStream()
+        self.stdout = OutputStream(conn, request_id, FCGI_STDOUT)
+        self.stderr = OutputStream(conn, request_id, FCGI_STDERR)
+        self._greenlet = None
+        self._environ = InputStream()
 
 
 class ServerConnection(Connection):
 
     def __init__(self, *args, **kw):
-        super(ServerConnection, self).__init__(*args, **kw)
-        self.lock = Semaphore(1)
+        Connection.__init__(self, *args, **kw)
+        self.lock = Semaphore()
 
     def write_record(self, record):
         # We must serialize access for possible multiple request greenlets
-        with self.lock:
-            super(ServerConnection, self).write_record(record)
+        self.lock.acquire()
+        try:
+            Connection.write_record(self, record)
+        finally:
+            self.lock.release()
 
 
 class ConnectionHandler(object):
 
     def __init__(self, conn, role, capabilities, request_handler):
+        conn._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        conn._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
         self.conn = conn
         self.role = role
         self.capabilities = capabilities
@@ -106,13 +130,13 @@ class ConnectionHandler(object):
         self.conn.write_record(Record(record_type, content, request_id))
 
     def fcgi_begin_request(self, record):
-        role, flags = begin_request_struct.unpack(record.content)
+        role, flags = unpack_begin_request(record.content)
         if role != self.role:
-            self.send_record(FCGI_END_REQUEST, end_request_struct.pack(
+            self.send_record(FCGI_END_REQUEST, pack_end_request(
                 0,  FCGI_UNKNOWN_ROLE), record.request_id)
             logger.error(
-                'Request role (%s) does not match server role (%s)',
-                role, self.role)
+                'Request role {0} does not match server role {1}'.format(
+                role, self.role))
             self._notify()
         else:
             # Should we check this for every request instead?
@@ -124,21 +148,27 @@ class ConnectionHandler(object):
             self.requests[request.id] = request
 
     def fcgi_params(self, record, request):
-        if record.content:
-            request.environ_list.append(record.content)
-        else:
-            request.environ.update(unpack_pairs(''.join(request.environ_list)))
-            del request.environ_list
+        request._environ.feed(record.content)
+        if not record.content:
+            request.environ = dict(unpack_pairs(request._environ.read()))
+            del request._environ
             if request.role == FCGI_AUTHORIZER:
-                request.greenlet = self._spawn(self._handle_request, request)
+                request._greenlet = self._spawn(self._handle_request, request)
 
     def fcgi_abort_request(self, record, request):
-        greenlet = request.greenlet
+        logger.warn('Aborting request {0}'.format(request.id))
         if request.id in self.requests:
-            del self.requests[request.id]
-        if not (greenlet is None or greenlet.ready()):
-            request.greenlet.kill()
-        logger.warn('Request %s aborted' % request.id)
+            greenlet = request._greenlet
+            if greenlet is None:
+                self.fcgi_end_request(request)
+                self._notify()
+            else:
+                logger.warn('Killing greenlet {0} for request {1}'.format(
+                    greenlet, request.id))
+                greenlet.kill()
+                greenlet.join()
+        else:
+            logger.debug('Request {0} not found'.format(request.id))
 
     def fcgi_get_values(self, record):
         pairs = ((name, self.capabilities.get(name)) for name, _ in
@@ -148,11 +178,17 @@ class ConnectionHandler(object):
         self.send_record(FCGI_GET_VALUES_RESULT, content)
         self._notify()
 
+    def fcgi_end_request(self, request, request_status=FCGI_REQUEST_COMPLETE,
+                         app_status=0):
+        self.send_record(FCGI_END_REQUEST, pack_end_request(
+            app_status, request_status), request.id)
+        del self.requests[request.id]
+        logger.debug('Request {0} ended'.format(request.id))
+
     def run(self):
         reader = self._spawn(self._reader)
         while 1:
             self._event.wait()
-            self._event.clear()
             logger.debug('Some greenlet has finished its job')
             if self.requests:
                 logger.debug('Connection left open due to active requests')
@@ -160,6 +196,7 @@ class ConnectionHandler(object):
                 logger.debug('Connection left open due to KEEP_CONN flag')
             else:
                 break
+            self._event.clear()
 
         logger.debug('Closing connection')
         # reader will stop too once we close connection
@@ -171,37 +208,34 @@ class ConnectionHandler(object):
             request.stdout.close()
             request.stderr.close()
         finally:
-            self.send_record(FCGI_END_REQUEST, end_request_struct.pack(
-                1, FCGI_REQUEST_COMPLETE), request.id)
-            self.requests.pop(request.id, None)
-            self._notify()
+            self.fcgi_end_request(request)
 
     def _reader(self):
         for record in self.conn:
-            if record.type in EXISTING_REQUEST_REC_TYPES:
+            if record.type in EXISTING_REQUEST_RECORD_TYPES:
                 self._handle_request_record(record)
             elif record.type == FCGI_BEGIN_REQUEST:
                 self.fcgi_begin_request(record)
             elif record.type == FCGI_GET_VALUES:
                 self.fcgi_get_values(record)
             else:
-                logger.error('%s: Unknown record type' % record)
+                logger.error('{0}: Unknown record type'.format(record))
                 self.send_record(FCGI_UNKNOWN_TYPE,
-                                 unknown_type_struct.pack(record.type))
+                                 pack_unknown_type(record.type))
 
     def _handle_request_record(self, record):
         request = self.requests.get(record.request_id)
 
         if not request:
-            logger.error('%s for non-existent request' % record)
+            logger.error('{0} for non-existent request'.format(record))
         elif record.type == FCGI_STDIN:
             request.stdin.feed(record.content)
             if not record.content and request.role == FCGI_RESPONDER:
-                request.greenlet = self._spawn(self._handle_request, request)
+                request._greenlet = self._spawn(self._handle_request, request)
         elif record.type == FCGI_DATA:
             request.data.feed(record.content)
             if not record.content and request.role == FCGI_FILTER:
-                request.greenlet = self._spawn(self._handle_request, request)
+                request._greenlet = self._spawn(self._handle_request, request)
         elif record.type == FCGI_PARAMS:
             self.fcgi_params(record, request)
         elif record.type == FCGI_ABORT_REQUEST:
@@ -224,22 +258,21 @@ class FastCGIServer(StreamServer):
     protocol implementation.
     """
 
-    def __init__(self, bind_address, request_handler, role=FCGI_RESPONDER,
+    def __init__(self, listener, request_handler, role=FCGI_RESPONDER,
                  num_workers=1, buffer_size=1024, max_conns=1024, **kwargs):
-        if isinstance(bind_address, basestring):
-            # StreamServer only accepts socket or tuple(address, port) so
-            # we need to pre-cook UNIX-socket for it
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.bind(bind_address)
-            sock.listen(max_conns)
-            bind_address = sock
+        # StreamServer does not create UNIX-sockets
+        if isinstance(listener, basestring):
+            address_family = socket.AF_UNIX
+            self._unix_socket = listener
+            listener = socket.socket(address_family, socket.SOCK_STREAM)
 
         super(FastCGIServer, self).__init__(
-            bind_address, self.handle_connection, spawn=max_conns, **kwargs)
+            listener, self.handle_connection, spawn=max_conns, **kwargs)
 
         if role not in (FCGI_RESPONDER, FCGI_FILTER, FCGI_AUTHORIZER):
-            raise ValueError('Illegal FastCGI role %s' % role)
+            raise ValueError('Illegal FastCGI role {0}'.format(role))
 
+        self.max_conns = max_conns
         self.role = role
         self.request_handler = request_handler
         self.buffer_size = buffer_size
@@ -249,58 +282,60 @@ class FastCGIServer(StreamServer):
             FCGI_MPXS_CONNS='1',
         )
 
-        assert int(num_workers) >= 1, 'num_workers must be greate than zero'
         self.num_workers = int(num_workers)
-        self.workers = []
+        assert self.num_workers > 0, 'num_workers must be positive number'
+        self._workers = []
 
     def start(self):
+        logger.debug('Starting server')
         if not self.started:
+            if hasattr(self, '_unix_socket'):
+                self.socket.bind(self._unix_socket)
+                self.socket.listen(self.max_conns)
+
+            super(FastCGIServer, self).start()
+
             if self.num_workers > 1:
-                logger.debug('Forking %s workers' % self.num_workers)
-                self.pre_start()
+                logger.debug('Forking {0} worker(s)'.format(self.num_workers))
                 for _ in range(self.num_workers):
-                    pid = os.fork()
-                    if pid:
-                        # master process
-                        self.workers.append(pid)
-                    else:  # pragma: nocover
-                        # worker
-                        del self.workers
-                        exit = Event()
-                        signal(SIGHUP, exit.set)
-                        super(FastCGIServer, self).start()
-                        while not exit.ready():
-                            try:
-                                exit.wait()  # wait forever
-                            finally:
-                                os._exit(0)
+                    self._start_worker()
 
-                # this is used to indicate all workers are dead
-                self._workers_dead = Event()
+                self._supervisor = spawn(self._watch_workers)
 
-                # because we wont call StreamServer.start in master process
-                self.started = True
-
-                signal(SIGCHLD, self._child_died)
-                signal(SIGHUP, self._kill_workers)
-            else:
-                return super(FastCGIServer, self).start()
-
-    def kill(self):
-        if hasattr(self, 'workers'):
-            # master process
-            if self.workers:
-                self._kill_workers()
-                self._workers_dead.wait()
-            if self.socket.family == socket.AF_UNIX:
-                # delete socket file
                 try:
-                    os.unlink(self.socket.getsockname())
-                except OSError:  # pragma: nocover
-                    logger.exception('Failed to remove socket file')
-            return super(FastCGIServer, self).kill()
-        else:  # pragma: nocover
+                    self.socket.close()
+                except:
+                    self.kill()
+                    raise
+
+    def stop(self, timeout=None):
+        super(FastCGIServer, self).stop(timeout)
+
+        if self._workers is not None:
+            # master process
+            try:
+                self._kill_workers()
+            finally:
+                if hasattr(self, '_unix_socket'):
+                    try:
+                        os.unlink(self._unix_socket)
+                    except OSError:
+                        logger.exception(
+                            'Failed to remove socket file {0}'
+                            .format(self.address))
+        else:
+            # worker
             os._exit(0)
+
+    def start_accepting(self):
+        # master proceess with workers is not allowed to accept
+        if self._workers is None or self.num_workers == 1:
+            super(FastCGIServer, self).start_accepting()
+
+    def stop_accepting(self):
+        # master proceess with workers is not allowed to accept
+        if self._workers is None or self.num_workers == 1:
+            super(FastCGIServer, self).stop_accepting()
 
     def handle_connection(self, sock, addr):
         if sock.family in (socket.AF_INET, socket.AF_INET6):
@@ -310,29 +345,70 @@ class FastCGIServer(StreamServer):
             conn, self.role, self.capabilities, self.request_handler)
         handler.run()
 
-    def _kill_workers(self, signo=SIGHUP):
-        for pid in self.workers:
+    def _start_worker(self):
+        pid = os.fork()
+        if pid:
+            # master process
+            self._workers.append(pid)
+            logger.debug('Started worker {0}'.format(pid))
+            return pid
+        else:  # pragma: nocover
+            # worker should never return
             try:
-                os.kill(pid, signo)
-            except OSError, x:  # pragma: nocover
-                if x.errno == 3:
-                    self.workers.remove(pid)
-                elif x.errno == 10:
-                    self.workers = []
-                    self._workers_dead.set()
+                self._workers = None
+                signal(SIGHUP, self.stop)
+                self.start_accepting()
+                super(FastCGIServer, self).serve_forever()
+            finally:
+                os._exit(0)
+
+    def _kill_workers(self):
+
+        def kill_seq(max_timeout):
+            for sig in SIGHUP, SIGKILL:
+                if not self._workers:
                     break
+                logger.debug('Killing workers {0} with signal {1}'.
+                             format(self._workers, sig))
+                for pid in self._workers[:]:
+                    yield pid, sig
 
-    def _child_died(self):
-        for worker in tuple(self.workers):
+                sleep(0)
+                if self._workers:
+                    sleep(max_timeout)
+
+        for pid, sig in kill_seq(2):
             try:
-                pid, status = os.waitpid(worker, os.WNOHANG)
-            except OSError, x:  # pragma: nocover
-                if x.errno == errno.ECHILD:
-                    self.workers.remove(worker)
+                logger.debug(
+                    'Killing worker {0} with signal {1}'.format(pid, sig))
+                os.kill(pid, sig)
+                sleep(0)
+            except OSError, x:
+                if x.errno == errno.ESRCH:
+                    logger.error('Worker with pid {0} not found'.format(pid))
+                    if pid in self._workers:
+                        self._workers.remove(pid)
                     continue
-            else:
-                if pid:
-                    self.workers.remove(pid)
+                if x.errno == errno.ECHILD:
+                    logger.error('No alive workers left')
+                    self._workers = []
+                    break
+        if self._workers:
+            logger.debug('There are still some alive workers after'
+                         'attempting to kill them')
 
-        if not self.workers:
-            self._workers_dead.set()
+    def _watch_workers(self, check_interval=1):
+        while True:
+            sleep(check_interval)
+            try:
+                while 1:
+                    pid, status = os.waitpid(-1, os.WNOHANG)
+                    if pid == 0:
+                        break
+                    if pid in self._workers:
+                        logger.debug('Worker {0} exited'.format(pid))
+                        self._workers.remove(pid)
+            except OSError, e:
+                if e.errno != errno.ECHILD:
+                    logger.exception('Failed to check if any worker died')
+                continue

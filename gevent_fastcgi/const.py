@@ -45,7 +45,6 @@ FCGI_CANT_MPX_CONN = 1
 FCGI_OVERLOADED = 2
 FCGI_UNKNOWN_ROLE = 3
 
-
 FCGI_RECORD_TYPES = {
     FCGI_BEGIN_REQUEST: 'FCGI_BEGIN_REQUEST',
     FCGI_ABORT_REQUEST: 'FCGI_ABORT_REQUEST',
@@ -59,16 +58,15 @@ FCGI_RECORD_TYPES = {
     FCGI_GET_VALUES_RESULT: 'FCGI_GET_VALUES_RESULT',
 }
 
+EXISTING_REQUEST_RECORD_TYPES = frozenset((
+    FCGI_STDIN,
+    FCGI_DATA,
+    FCGI_PARAMS,
+    FCGI_ABORT_REQUEST,
+))
+
 FCGI_MAX_CONNS = 'FCGI_MAX_CONNS'
 FCGI_MAX_REQS = 'FCGI_MAX_REQS'
 FCGI_MPXS_CONNS = 'FCGI_MPXS_CONNS'
 
-
-import struct
-
-header_struct = struct.Struct('!BBHHBx')
-begin_request_struct = struct.Struct('!HB5x')
-end_request_struct = struct.Struct('!LB3x')
-unknown_type_struct = struct.Struct('!B7x')
-
-del struct
+FCGI_MAX_CONTENT_LEN = 65535

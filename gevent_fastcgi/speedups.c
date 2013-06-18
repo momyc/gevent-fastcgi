@@ -21,6 +21,7 @@
  */
 
 #include <Python.h>
+#include <arpa/inet.h>
 
 #define ENSURE_LEN(req) if (end - buf < req) return PyErr_Format(PyExc_ValueError, "Buffer is %d byte(s) short", req)
 #define PARSE_LEN(len) ENSURE_LEN(1); \
@@ -102,9 +103,68 @@ py_pack_pair(PyObject *self, PyObject *args) {
 	return result;
 }
 
+typedef struct {
+	unsigned char fcgi_version, record_type;
+	unsigned short int request_id, content_len;
+	unsigned char padding;
+	char reserved;
+} record_header_t;
+
+
+static PyObject *
+py_pack_header(PyObject *self, PyObject *args) {
+	PyObject *result;
+	record_header_t *header;
+
+	header = (record_header_t *) PyMem_Malloc(sizeof(record_header_t));
+	if (!header) return PyErr_NoMemory();
+
+	if (!PyArg_ParseTuple(args, "bbHHb:pack_header",
+		&(header->fcgi_version),
+		&(header->record_type),
+		&(header->request_id),
+		&(header->content_len),
+		&(header->padding))) return NULL;
+
+	header->request_id = htons(header->request_id);
+	header->content_len = htons(header->content_len);
+
+	result = PyString_FromStringAndSize((char *)header, sizeof(record_header_t));
+	PyMem_Free(header);
+	return result;
+}
+
+
+static PyObject *
+py_unpack_header(PyObject *self, PyObject *args) {
+	PyObject *result;
+	record_header_t *header;
+	int len;
+	
+	if (!PyArg_ParseTuple(args, "s#:unpack_header", (char *)&header, &len)) return NULL;
+
+	if (len < sizeof(record_header_t))
+		return PyErr_Format(PyExc_ValueError,
+				"Data must be at least %d bytes long (%d passed)",
+				sizeof(record_header_t), len);
+
+	result = PyBuildValue("(bbhhb)",
+			header->fcgi_version,
+			header->record_type,
+			ntohs(header->request_id),
+			ntohs(header->content_len),
+			header->padding);
+	if (!result) return PyErr_NoMemory();
+	PyMem_Free(header);
+	return result;
+}
+
+
 static PyMethodDef _methods[] = {
 	{"unpack_pairs", py_unpack_pairs, METH_VARARGS},
 	{"pack_pair", py_pack_pair, METH_VARARGS},
+	{"pack_header", py_pack_header, METH_VARARGS},
+	{"unpack_header", py_unpack_header, METH_VARARGS},
 	{NULL, NULL}
 };
 

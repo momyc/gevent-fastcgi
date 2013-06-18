@@ -1,17 +1,24 @@
+from __future__ import absolute_import
+
 import errno
-from random import random, randint
+from random import random, randint, choice
+from string import digits, letters, punctuation
 from functools import wraps
 from contextlib import contextmanager
 import logging
+
 from gevent import socket, sleep
-from gevent_fastcgi.const import (
+
+from ..const import (
     FCGI_RESPONDER,
     FCGI_MAX_CONNS,
     FCGI_MAX_REQS,
     FCGI_MPXS_CONNS,
+    FCGI_MAX_CONTENT_LEN,
 )
-from gevent_fastcgi.base import Connection, InputStream, pack_pairs
-from gevent_fastcgi.wsgi import WSGIServer
+from ..base import Connection, InputStream
+from ..utils import pack_pairs
+from ..wsgi import WSGIServer
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +44,30 @@ def some_delay(delay=None):
     if delay is None:
         delay = random * 3
     sleep(delay)
+
+
+_binary_source = map(chr, range(256))
+_text_source = letters + digits + punctuation
+
+
+def _random_data(source, max_len, min_len):
+    if max_len is None:
+        size = 137
+    elif min_len is None:
+        size = max_len
+    else:
+        if max_len < min_len:
+            max_len, min_len = min_len, max_len
+        size = randint(min_len, max_len)
+    return (choice(source) for _ in xrange(size))
+
+
+def binary_data(max_len=None, min_len=None):
+    return b''.join(_random_data(_binary_source, max_len, min_len))
+
+
+def text_data(max_len=None, min_len=None):
+    return ''.join(_random_data(_text_source, max_len, min_len))
 
 
 class WSGIApplication(object):
@@ -66,13 +97,15 @@ class WSGIApplication(object):
 
         if self.response is None:
             response = stdin.read() or self.data
+        elif isinstance(self.response, basestring):
+            response = [self.response]
         else:
             response = self.response
 
-        for data in response:
-            if self.slow:
-                some_delay()
-            yield data
+        if self.slow:
+            some_delay()
+
+        return response
 
     data = map('\n'.__add__, [
         'Lorem ipsum dolor sit amet, consectetur adipisicing elit',
@@ -134,10 +167,17 @@ class MockSocket(object):
         self.exception = False
         self.closed = False
 
-    def sendall(self, data):
+    def send(self, data, flags=0, timeout=None):
+        size = len(data)
+        self.check_socket()
+        self.output += data[:size]
+        #self.some_delay()
+        return size
+
+    def sendall(self, data, flags=0):
         self.check_socket()
         self.output += data
-        self.some_delay()
+        #self.some_delay()
 
     def recv(self, max_len=0):
         self.check_socket()

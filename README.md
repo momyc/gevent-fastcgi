@@ -29,10 +29,13 @@ $ easy_install gevent-fastcgi
 ```python
 from gevent_fastcgi.server import FastCGIServer
 from gevent_fastcgi.wsgi import WSGIHandler
-from myapp import app
+from myapp import wsgi_app
 
-request_handler = WSGIRequestHandler(app(app)
-server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16)
+request_handler = WSGIRequestHandler(wsgi_app)
+#request_handler = WSGIRefRequestHandler(wsgi_app)
+#request_handler = FastCGIRequestHandler(fastcgi_app)
+server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16, multiplex_conn=True)
+
 # To use UNIX-socket instead of TCP
 # server = FastCGIServer('/path/to/socket', request_handler, max_conns=4096)
 
@@ -40,7 +43,26 @@ server.serve_forever()
 ```
 ### PasteDeploy
 
-Gevent-fastcgi defines paste.server_runner entry point. It will run FastCGIServer with WSGIRequestHandler. 
+Gevent-fastcgi defines three `paste.server_runner' entry points. Each of them will run FastCGIServer with different request
+handler implementation:
+
++ *wsgi*
+
+	`gevent_fastcgi.wsgi.WSGIRequestHandler' will be used to handle requests.
+	Application is expected to be a WSGI-application.
+
++ *wsgiref*
+
+	`gevent_fastcgi.wsgi.WSGIRefRequestHandler' which uses standard `wsgiref.handlers'.
+	Application is expected to be a WSGI-application.
+
++ *fastcgi*
+
+	Application is expected to implement `gevent_fastcgi.interfaces.IRequestHandler' interface.
+	It should use `request.stdin' to receive request body and `request.stdout' and/or `request.stderr' to send
+	response back to Web-server.
+
+
 Use it as following:
 ```
 ...
@@ -78,7 +100,7 @@ python manage.py run_gevent_fastcgi host:port
 
 ### Custom request handlers
 
-Starting from version 0.1.16dev It is possible to use custom request handler with `gevent_fastcgi.server.FastCGIServer`. Such a handler should implement `gevent_fastcgi.interfaces.IRequestHandler` interface and basically is just a callable that accepts single positional argument `request`. `gevent_fastcgi.wsgi` module contains `WSGIRequestHandler` which is `IRequestHandler` implementation that can run WSGI-application in order to serve request. 
+Starting from version 0.1.16dev It is possible to use custom request handler with `gevent_fastcgi.server.FastCGIServer`. Such a handler should implement `gevent_fastcgi.interfaces.IRequestHandler` interface and basically is just a callable that accepts single positional argument `request`. `gevent_fastcgi.wsgi` module contains two implementations of `IRequestHandler`. 
 
 Request handler is run in separate greenlet. Request argument passed to request handler callable has the following attributes:
 
@@ -87,7 +109,7 @@ Request handler is run in separate greenlet. Request argument passed to request 
 * _stdout_ File-like object that should be used by request handler to send response (including response headers)
 * _stderr_ File-like object that can be used to send error information back to Web-server and sys.stderr
 
-The following is examples of custom request handler implementations:
+The following is examples of request handler implementations:
 
 ```python
 import os

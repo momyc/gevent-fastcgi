@@ -53,7 +53,7 @@ class Client(object):
 
         self._conn = Connection(sock, self.buffer_size)
 
-    def get_values(self, names, timeout=None):
+    def fastcgi_get_values(self, names, timeout=None):
         self.send(
             Record(FCGI_GET_VALUES, pack_pairs(dict.fromkeys(names, ''))))
         record = self.receive()
@@ -62,8 +62,8 @@ class Client(object):
                 'Unexpected record type received %s' % record.type)
         return dict(unpack_pairs(record.content))
 
-    def run_request(self, environ, request_id=1, role=FCGI_RESPONDER,
-                    stdin=None, data=None, flags=0):
+    def fastcgi_request(self, environ, request_id=1, role=FCGI_RESPONDER,
+                        stdin=None, data=None, flags=0):
         """
         Send request and receive response.
         Return tuple (app_status, stdout, stderr)
