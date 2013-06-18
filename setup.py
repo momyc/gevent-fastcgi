@@ -22,7 +22,8 @@ setup(
     zip_safe=True,
     license='MIT',
     install_requires=[
-        "gevent>=0.13.6"
+        "zope.interface",
+        "gevent>=0.13.6",
     ],
     entry_points={
         'paste.server_runner': [
