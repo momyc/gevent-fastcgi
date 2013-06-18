@@ -55,10 +55,9 @@ class ServerTests(unittest.TestCase):
         unix_address = 'socket.{0}'.format(os.getpid())
         tcp_address = ('127.0.0.1', 47231)
         for address in (tcp_address, unix_address):
-            with start_wsgi_server(address):
+            with start_wsgi_server(address, num_workers=2):
                 with make_connection(address) as conn:
                     self._run_get_values(conn)
-
             # check if socket file was removed
             if isinstance(address, basestring):
                 assert not os.path.exists(address)

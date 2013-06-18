@@ -26,11 +26,12 @@ patch_os()
 import os
 import errno
 import logging
-from signal import SIGHUP, SIGINT, SIGQUIT, SIGKILL
+from signal import SIGHUP, SIGKILL
+from traceback import format_stack
 
 from zope.interface import implements
 
-from gevent import sleep, spawn, socket, signal, getcurrent
+from gevent import sleep, spawn, socket, signal, version_info
 from gevent.server import StreamServer
 from gevent.event import Event
 from gevent.coros import Semaphore
@@ -40,7 +41,6 @@ from .const import (
     FCGI_ABORT_REQUEST,
     FCGI_AUTHORIZER,
     FCGI_BEGIN_REQUEST,
-    FCGI_DATA,
     FCGI_END_REQUEST,
     FCGI_FILTER,
     FCGI_GET_VALUES,
@@ -67,10 +67,8 @@ from .base import (
 from .utils import (
     pack_pairs,
     unpack_pairs,
-    pack_begin_request,
     unpack_begin_request,
     pack_end_request,
-    unpack_end_request,
     pack_unknown_type,
 )
 
@@ -299,41 +297,15 @@ class FastCGIServer(StreamServer):
                 logger.debug('Forking {0} worker(s)'.format(self.num_workers))
                 for _ in range(self.num_workers):
                     self._start_worker()
-
-                self._supervisor = spawn(self._watch_workers)
-
-                try:
-                    self.socket.close()
-                except:
-                    self.kill()
-                    raise
-
-    def stop(self, timeout=None):
-        super(FastCGIServer, self).stop(timeout)
-
-        if self._workers is not None:
-            # master process
-            try:
-                self._kill_workers()
-            finally:
-                if hasattr(self, '_unix_socket'):
-                    try:
-                        os.unlink(self._unix_socket)
-                    except OSError:
-                        logger.exception(
-                            'Failed to remove socket file {0}'
-                            .format(self.address))
-        else:
-            # worker
-            os._exit(0)
+                self._watcher = spawn(self._watch_workers)
 
     def start_accepting(self):
-        # master proceess with workers is not allowed to accept
+        # master proceess with workers should not start accepting
         if self._workers is None or self.num_workers == 1:
             super(FastCGIServer, self).start_accepting()
 
     def stop_accepting(self):
-        # master proceess with workers is not allowed to accept
+        # master proceess with workers did not start accepting
         if self._workers is None or self.num_workers == 1:
             super(FastCGIServer, self).stop_accepting()
 
@@ -352,9 +324,10 @@ class FastCGIServer(StreamServer):
             self._workers.append(pid)
             logger.debug('Started worker {0}'.format(pid))
             return pid
-        else:  # pragma: nocover
+        else:
             # worker should never return
             try:
+                # this indicates current process is a worker
                 self._workers = None
                 signal(SIGHUP, self.stop)
                 self.start_accepting()
@@ -362,53 +335,93 @@ class FastCGIServer(StreamServer):
             finally:
                 os._exit(0)
 
-    def _kill_workers(self):
-
-        def kill_seq(max_timeout):
-            for sig in SIGHUP, SIGKILL:
-                if not self._workers:
-                    break
-                logger.debug('Killing workers {0} with signal {1}'.
-                             format(self._workers, sig))
-                for pid in self._workers[:]:
-                    yield pid, sig
-
-                sleep(0)
-                if self._workers:
-                    sleep(max_timeout)
-
-        for pid, sig in kill_seq(2):
-            try:
-                logger.debug(
-                    'Killing worker {0} with signal {1}'.format(pid, sig))
-                os.kill(pid, sig)
-                sleep(0)
-            except OSError, x:
-                if x.errno == errno.ESRCH:
-                    logger.error('Worker with pid {0} not found'.format(pid))
-                    if pid in self._workers:
-                        self._workers.remove(pid)
-                    continue
-                if x.errno == errno.ECHILD:
-                    logger.error('No alive workers left')
-                    self._workers = []
-                    break
-        if self._workers:
-            logger.debug('There are still some alive workers after'
-                         'attempting to kill them')
-
-    def _watch_workers(self, check_interval=1):
+    def _watch_workers(self, check_interval=5):
         while True:
-            sleep(check_interval)
             try:
-                while 1:
+                sleep(check_interval)
+            except self.WakeUp:
+                logger.debug('Watcher was woken up')
+            try:
+                while True:
                     pid, status = os.waitpid(-1, os.WNOHANG)
                     if pid == 0:
                         break
                     if pid in self._workers:
-                        logger.debug('Worker {0} exited'.format(pid))
+                        logger.debug('Worker {0} is dead'.format(pid))
                         self._workers.remove(pid)
             except OSError, e:
                 if e.errno != errno.ECHILD:
                     logger.exception('Failed to check if any worker died')
                 continue
+
+    if version_info < (1,):
+        # older version of gevent
+        def kill(self):
+            super(FastCGIServer, self).kill()
+            self._cleanup()
+    else:
+        def close(self):
+            super(FastCGIServer, self).close()
+            self._cleanup()
+
+    def _cleanup(self):
+        if self._workers is not None:
+            # master process
+            logger.debug('Cleaning up')
+            try:
+                self._kill_workers()
+            finally:
+                self._remove_socket_file()
+
+    def _kill_workers(self, kill_timeout=2):
+        for pid, sig in self._killing_sequence(kill_timeout):
+            try:
+                logger.debug(
+                    'Killing worker {0} with signal {1}'.format(pid, sig))
+                os.kill(pid, sig)
+            except OSError, x:
+                if x.errno == errno.ESRCH:
+                    logger.error('Worker with pid {0} not found'.format(pid))
+                    if pid in self._workers:
+                        self._workers.remove(pid)
+                elif x.errno == errno.ECHILD:
+                    logger.error('No alive workers left')
+                    self._workers = []
+                    break
+                else:
+                    logger.exception(
+                        'Failed to kill worker {0} with signal {1}'.format(
+                            pid, sig))
+        if self._workers:
+            logger.debug('There are still some alive workers after'
+                         'attempting to kill them')
+
+    def _killing_sequence(self, max_timeout):
+        for sig in SIGHUP, SIGKILL:
+            if not self._workers:
+                raise StopIteration
+            logger.debug('Killing workers {0} with signal {1}'.
+                         format(self._workers, sig))
+            for pid in self._workers[:]:
+                yield pid, sig
+
+            sleep()
+            if self._workers:
+                sleep(max_timeout)
+                self._watcher.kill(self.WakeUp, block=False)
+                sleep()
+
+    def _remove_socket_file(self):
+        file_name = self.__dict__.pop('_unix_socket', None)
+        if file_name:
+            try:
+                logger.debug('Removing socket-file {0}'.format(file_name))
+                os.unlink(file_name)
+            except OSError:
+                logger.exception(
+                    'Failed to remove socket file {0}'
+                    .format(file_name))
+
+    class WakeUp(Exception):
+        """ Used to signal watcher greenlet
+        """

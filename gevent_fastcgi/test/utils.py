@@ -145,8 +145,8 @@ def start_wsgi_server(address=None, app=None, **kw):
         app = WSGIApplication()
 
     server = WSGIServer(address, app, **kw)
-    server.start()
     try:
+        server.start()
         yield server
     finally:
         server.stop()
