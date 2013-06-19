@@ -25,7 +25,6 @@ import gevent.monkey
 from paste.deploy.converters import asbool
 
 from ..server import FastCGIServer
-from ..wsgi import WSGIRefRequestHandler, WSGIRequestHandler
 
 
 def server_params(app, conf, host='127.0.0.1', port=5000, socket=None,
@@ -49,6 +48,8 @@ def fastcgi_server_runner(*args, **kwargs):
 
 @wraps(server_params)
 def wsgiref_server_runner(*args, **kwargs):
+    from ..wsgi import WSGIRefRequestHandler
+
     (app, address), kwargs = server_params(*args, **kwargs)
     handler = WSGIRefRequestHandler(app)
     FastCGIServer(address, handler, **kwargs).serve_forever()
@@ -56,24 +57,8 @@ def wsgiref_server_runner(*args, **kwargs):
 
 @wraps(server_params)
 def wsgi_server_runner(*args, **kwargs):
+    from ..wsgi import WSGIRequestHandler
+
     (app, address), kwargs = server_params(*args, **kwargs)
     handler = WSGIRequestHandler(app)
     FastCGIServer(address, handler, **kwargs).serve_forever()
-
-
-#@wraps(server_params)
-#def wsgi_server_runner(*args, **kwargs):
-#    (app, address), kwargs = server_params(*args, **kwargs)
-#    handler = ProfilingWSGIRequestHandler(app)
-#    FastCGIServer(address, handler, **kwargs).serve_forever()
-
-
-class ProfilingWSGIRequestHandler(WSGIRefRequestHandler):
-    def __init__(self, app):
-        from gevent_profiler import profile
-        super(ProfilingWSGIRequestHandler, self).__init__(app)
-        self.__profile = profile
-
-    def __call__(self, request):
-        self.__profile(
-            super(ProfilingWSGIRequestHandler, self).__call__, request)
