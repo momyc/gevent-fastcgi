@@ -231,19 +231,18 @@ class OutputStream(object):
 
     def write(self, data):
         if self.closed:
-            raise ValueError('Write on closed OutputStream')
+            raise IOError('Writing to closed stream {0}'.format(self))
 
         if not data:
             return
 
+        write_record = self.conn.write_record
         size = len(data)
+        record = Record(self.record_type, data, self.request_id)
 
         if size <= FCGI_MAX_CONTENT_LEN:
-            self.conn.write_record(
-                Record(self.record_type, data, self.request_id))
+            write_record(record)
         else:
-            write_record = self.conn.write_record
-            record = Record(self.record_type, '', self.request_id)
             data = buffer(data)
             sent = 0
             while sent < size:
@@ -252,7 +251,34 @@ class OutputStream(object):
                 sent += FCGI_MAX_CONTENT_LEN
 
     def writelines(self, lines):
-        map(self.write, lines)
+        if self.closed:
+            raise IOError('Writing to closed stream {0}'.format(self))
+
+        write_record = self.conn.write_record
+        record = Record(self.record_type, '', self.request_id)
+        buf = []
+        remainder = FCGI_MAX_CONTENT_LEN
+
+        for line in lines:
+            if not line:
+                # skip empty lines
+                continue
+
+            line_len = len(line)
+
+            if line_len >= remainder:
+                buf.append(line[:remainder])
+                record.content = ''.join(buf)
+                write_record(record)
+                buf = [line[remainder:]]
+                remainder = FCGI_MAX_CONTENT_LEN
+            else:
+                buf.append(line)
+                remainder -= line_len
+
+        if buf:
+            record.content = ''.join(buf)
+            write_record(record)
 
     def flush(self):
         pass

@@ -84,7 +84,7 @@ class OutputStreamTest(unittest.TestCase):
         # should send EOF record
         stream.close()
         # should fail since stream was closed
-        self.assertRaises(ValueError, stream.write, '')
+        self.assertRaises(IOError, stream.write, '')
 
         self.sock.flip()
 
@@ -98,14 +98,15 @@ class OutputStreamTest(unittest.TestCase):
 
     def test_writelines(self):
         stream = self.stream()
-        data = [text_data(731) + '\r\n' for _ in xrange(137)]
+        data = [text_data(7) + '\r\n' for _ in xrange(3)]
 
         stream.writelines(data)
 
         self.sock.flip()
 
-        for line, record in zip(data, self.conn):
-            assert record.type == stream.record_type
-            assert record.request_id == stream.request_id
-            assert record.content == line
-        assert self.conn.read_record() is None
+        data_in = ''.join(data)
+        data_out = ''.join(record.content for record in self.conn
+                           if (record.type == stream.record_type
+                               and record.request_id == stream.request_id))
+
+        assert data_in == data_out, '{0!r} != {1!r}'.format(data_in, data_out)
