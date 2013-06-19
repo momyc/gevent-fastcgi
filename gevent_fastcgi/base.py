@@ -42,6 +42,16 @@ from .const import (
 from .utils import pack_header, unpack_header
 
 
+__all__ = (
+    'PartialRead',
+    'BufferedReader',
+    'Record',
+    'Connection',
+    'InputStream',
+    'StdoutStream',
+    'StderrStream',
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -221,12 +231,9 @@ class OutputStream(object):
     """
     FCGI_STDOUT or FCGI_STDERR stream.
     """
-    def __init__(self, conn, request_id, record_type):
-        if record_type not in (FCGI_STDOUT, FCGI_STDERR):
-            raise ValueError('Invalid record_type {0}'.format(record_type))
+    def __init__(self, conn, request_id):
         self.conn = conn
         self.request_id = request_id
-        self.record_type = record_type
         self.closed = False
 
     def write(self, data):
@@ -288,3 +295,28 @@ class OutputStream(object):
             self.closed = True
             self.conn.write_record(
                 Record(self.record_type, '', self.request_id))
+
+
+class StdoutStream(OutputStream):
+
+    record_type = FCGI_STDOUT
+
+    def writelines(self, lines):
+        # WSGI server must not buffer application iterable
+        if isinstance(lines, (list, tuple)):
+            # ...unless we have all output readily available
+            OutputStream.writelines(self, lines)
+        else:
+            if self.closed:
+                raise IOError('Writing to closed stream {0}'.format(self))
+            write_record = self.conn.write_record
+            record = Record(self.record_type, '', self.request_id)
+            for line in lines:
+                if line:
+                    record.content = line
+                    write_record(record)
+
+
+class StderrStream(OutputStream):
+
+    record_type = FCGI_STDERR

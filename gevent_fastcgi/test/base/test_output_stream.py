@@ -9,11 +9,11 @@ from ...const import (
     FCGI_MAX_CONTENT_LEN,
 )
 
-from ...base import Connection, OutputStream
+from ...base import Connection, StdoutStream, StderrStream
 from ..utils import binary_data, text_data, MockSocket
 
 
-class OutputStreamTest(unittest.TestCase):
+class StreamTestsBase(object):
 
     def setUp(self):
         self.sock = MockSocket()
@@ -23,26 +23,27 @@ class OutputStreamTest(unittest.TestCase):
         del self.conn
         del self.sock
 
-    def stream(self, record_type=FCGI_STDOUT):
-        return OutputStream(self.conn, randint(1, 65535), record_type)
+    def stream(self, conn=None, request_id=None):
+        if conn is None:
+            conn = self.conn
+        if request_id is None:
+            request_id = randint(1, 65535)
+        return self.stream_class(conn, request_id)
 
     def test_constructor(self):
         conn = self.conn
 
-        self.assertRaises(TypeError, OutputStream)
-        self.assertRaises(TypeError, OutputStream, conn)
-        self.assertRaises(TypeError, OutputStream, conn, 222)
-        self.assertRaises(ValueError, OutputStream, conn, 111, 222)
+        self.assertRaises(TypeError, self.stream_class)
+        self.assertRaises(TypeError, self.stream_class, conn)
 
-        for stream_type in FCGI_STDOUT, FCGI_STDERR:
-            stream = OutputStream(conn, 333, stream_type)
-            assert stream.conn is conn
-            assert stream.request_id == 333
-            assert stream.record_type == stream_type
-            assert not stream.closed
+        stream = self.stream_class(conn, 333)
+        assert stream.conn is conn
+        assert stream.request_id == 333
+        assert stream.record_type == self.stream_class.record_type
+        assert not stream.closed
 
     def test_write(self):
-        stream = self.stream(FCGI_STDERR)
+        stream = self.stream()
         data = [binary_data(1, 1024) for _ in range(13)]
 
         map(stream.write, data)
@@ -95,6 +96,30 @@ class OutputStreamTest(unittest.TestCase):
         assert record.request_id == stream.request_id
 
         assert self.conn.read_record() is None
+
+
+class StdoutStreamTests(StreamTestsBase, unittest.TestCase):
+
+    stream_class = StdoutStream
+
+    def test_writelines(self):
+        from gevent import sleep, Timeout
+
+        stream = self.stream()
+
+        def app_iter(delay):
+            yield text_data(137)
+            sleep(delay)
+            yield text_data(137137)
+
+        with self.assertRaises(Timeout):
+            Timeout(1).start()
+            stream.writelines(app_iter(3))
+
+
+class StderrStreamTests(StreamTestsBase, unittest.TestCase):
+
+    stream_class = StderrStream
 
     def test_writelines(self):
         stream = self.stream()

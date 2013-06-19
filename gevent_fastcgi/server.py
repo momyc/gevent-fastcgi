@@ -62,7 +62,8 @@ from .base import (
     Connection,
     Record,
     InputStream,
-    OutputStream,
+    StdoutStream,
+    StderrStream,
 )
 from .utils import (
     pack_pairs,
@@ -88,8 +89,8 @@ class Request(object):
         self.role = role
         self.environ = {}
         self.stdin = InputStream()
-        self.stdout = OutputStream(conn, request_id, FCGI_STDOUT)
-        self.stderr = OutputStream(conn, request_id, FCGI_STDERR)
+        self.stdout = StdoutStream(conn, request_id)
+        self.stderr = StderrStream(conn, request_id)
         self._greenlet = None
         self._environ = InputStream()
 
