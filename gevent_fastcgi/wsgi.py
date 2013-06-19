@@ -122,18 +122,22 @@ class WSGIRequest(object):
         return self._app_write
 
     def finish(self, app_iter):
-        app_iter = iter(app_iter)
-        # do nothing until first non-empty item
-        for chunk in app_iter:
-            if chunk:
-                self._send_headers()
-                self._stdout.write(chunk)
-                self._stdout.writelines(app_iter)
-                break
+        if self._headers_sent:
+            # _app_write has been already called
+            self._stdout.writelines(app_iter)
         else:
-            # app_iter had no data
-            self._headers.append(('Content-length', '0'))
-            self._send_headers()
+            app_iter = iter(app_iter)
+            for chunk in app_iter:
+                # do nothing until first non-empty chunk
+                if chunk:
+                    self._send_headers()
+                    self._stdout.write(chunk)
+                    self._stdout.writelines(app_iter)
+                    break
+            else:
+                # app_iter had no data
+                self._headers.append(('Content-length', '0'))
+                self._send_headers()
 
         self._stdout.close()
         self._stderr.close()
@@ -144,10 +148,11 @@ class WSGIRequest(object):
         self._stdout.write(chunk)
 
     def _send_headers(self):
-        self._stdout.writelines('{0}: {1}\r\n'.format(name, value)
-                                for name, value in
-                                [('Status', self._status)] + self._headers)
-        self._stdout.write('\r\n')
+        headers = ['Status: {0}\r\n'.format(self._status)]
+        headers.extend(('{0}: {1}\r\n'.format(name, value)
+                       for name, value in self._headers))
+        headers.append('\r\n')
+        self._stdout.writelines(headers)
         self._headers_sent = True
 
 
