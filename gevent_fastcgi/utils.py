@@ -21,6 +21,7 @@
 from __future__ import absolute_import
 
 import struct
+import logging
 
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     'unpack_pairs',
 ]
 
+logger = logging.getLogger(__name__)
 
 header_struct = struct.Struct('!BBHHBx')
 begin_request_struct = struct.Struct('!HB5x')
@@ -36,9 +38,13 @@ unknown_type_struct = struct.Struct('!B7x')
 
 for name in 'header', 'begin_request', 'end_request', 'unknown_type':
     packer = globals().get('{}_struct'.format(name))
-    globals()['pack_{}'.format(name)] = packer.pack
-    globals()['unpack_{}'.format(name)] = packer.unpack_from
-    __all__.append(name)
+    for prefix, attr in (
+        ('pack_', 'pack'),
+        ('unpack_', 'unpack_from'),
+    ):
+        full_name = prefix + name
+        globals()[full_name] = getattr(packer, attr)
+        __all__.append(full_name)
 
 
 def pack_pairs(pairs):
@@ -50,7 +56,7 @@ def pack_pairs(pairs):
 try:
     from .speedups import pack_pair, unpack_pairs
 except ImportError:
-    import struct
+    logger.exception('Failed to load speedups module')
 
     length_struct = struct.Struct('!L')
 
@@ -82,10 +88,13 @@ except ImportError:
             try:
                 name_len, pos = unpack_len(data, pos)
                 value_len, pos = unpack_len(data, pos)
+                if end - pos < name_len + value_len:
+                    raise ValueError('Buffer is {0} bytes short'.format(
+                        name_len + value_len - (end - pos)))
                 name = data[pos:pos + name_len]
                 pos += name_len
                 value = data[pos:pos + value_len]
                 pos += value_len
                 yield name, value
             except (IndexError, struct.error):
-                raise ValueError('Failed to unpack name/value pairs')
+                raise ValueError('Buffer is too short')

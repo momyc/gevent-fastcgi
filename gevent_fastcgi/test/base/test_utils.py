@@ -8,12 +8,30 @@ from ..utils import binary_data
 
 class UtilsTests(unittest.TestCase):
 
-    def test_pack_unpack(self):
+    def test_pack_unpack_pairs(self):
         from ...utils import pack_pairs, unpack_pairs
 
         pairs = os.environ.items()
         for pair_in, pair_out in zip(pairs, unpack_pairs(pack_pairs(pairs))):
             assert pair_in == pair_out
+
+        pairs = list(unpack_pairs('\1\2ABC\2\5DEFGHJK'))
+        assert pairs == [('A', 'BC'), ('DE', 'FGHJK')]
+
+    def test_unpack_pairs_fail(self):
+        from ...utils import unpack_pairs
+
+        for data in (
+            '\1',
+            '\1\1',
+            '\1\1A',
+            '\5\2AAA',
+            '\5\3AAAAA',
+            '\5\3AAAAABB',
+            '\x80\0\0\0\2\0',
+        ):
+            with self.assertRaises(ValueError):
+                dict(unpack_pairs(data))
 
     def test_pack_unpack_header(self):
         from ...const import FCGI_VERSION, FCGI_BEGIN_REQUEST

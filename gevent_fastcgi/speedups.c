@@ -23,7 +23,12 @@
 #include <Python.h>
 #include <arpa/inet.h>
 
-#define ENSURE_LEN(req) if (end - buf < req) return PyErr_Format(PyExc_ValueError, "Buffer is %d byte(s) short", req)
+
+#define ENSURE_LEN(req) if ((end - buf) < (req)) { \
+	Py_XDECREF(result); \
+	return PyErr_Format(PyExc_ValueError, "Buffer is %d byte(s) short", (req) - (end - buf)); \
+}
+
 #define PARSE_LEN(len) ENSURE_LEN(1); \
 	len = *buf++; \
 	if (len & 0x80) { \
@@ -49,12 +54,12 @@ py_unpack_pairs(PyObject *self, PyObject *args) {
 		while (buf < end) {
 			PARSE_LEN(nlen);
 			PARSE_LEN(vlen);
-			ENSURE_LEN(nlen + vlen);
+			ENSURE_LEN((nlen + vlen));
 			name = buf;
 			buf += nlen;
 			value = buf;
 			buf += vlen;
-			tuple = Py_BuildValue("s#s#", name, nlen, value, vlen);
+			tuple = Py_BuildValue("(s#s#)", name, nlen, value, vlen);
 			if (tuple) {
 				PyList_Append(result, tuple);
 				Py_DECREF(tuple);
@@ -148,7 +153,7 @@ py_unpack_header(PyObject *self, PyObject *args) {
 				"Data must be at least %d bytes long (%d passed)",
 				sizeof(record_header_t), len);
 
-	result = PyBuildValue("(bbhhb)",
+	result = Py_BuildValue("(bbhhb)",
 			header->fcgi_version,
 			header->record_type,
 			ntohs(header->request_id),
