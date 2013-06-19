@@ -37,7 +37,7 @@ __all__ = ('WSGIRequestHandler', 'WSGIRefRequestHandler', 'WSGIServer')
 
 logger = logging.getLogger(__name__)
 
-MANDATORY_WSGI_ENVIRON_VARS = frozenset((
+mandatory_environ = (
     'REQUEST_METHOD',
     'SCRIPT_NAME',
     'PATH_INFO',
@@ -47,7 +47,7 @@ MANDATORY_WSGI_ENVIRON_VARS = frozenset((
     'SERVER_NAME',
     'SERVER_PORT',
     'SERVER_PROTOCOL',
-))
+)
 
 
 class WSGIRefRequestHandler(object):
@@ -81,21 +81,21 @@ class WSGIRequest(object):
 
     status_pattern = re.compile(r'^[1-5]\d\d .+$')
 
-    def __init__(self, request):
-        self._request = request
+    def __init__(self, fastcgi_request):
+        self._environ = self.make_environ(fastcgi_request)
+        self._stdout = fastcgi_request.stdout
+        self._stderr = fastcgi_request.stderr
         self._status = None
         self._headers = []
         self._headers_sent = False
 
-    def make_environ(self):
-        env = self._request.environ
-
-        for name in MANDATORY_WSGI_ENVIRON_VARS.difference(env):
-            env[name] = ''
-
+    def make_environ(self, fastcgi_request):
+        env = fastcgi_request.environ
+        for name in mandatory_environ:
+            env.setdefault(name, '')
         env['wsgi.version'] = (1, 0)
-        env['wsgi.input'] = self._request.stdin
-        env['wsgi.errors'] = self._request.stderr
+        env['wsgi.input'] = fastcgi_request.stdin
+        env['wsgi.errors'] = fastcgi_request.stderr
         env['wsgi.multithread'] = True
         env['wsgi.multiprocess'] = False
         env['wsgi.run_once'] = False
@@ -122,35 +122,32 @@ class WSGIRequest(object):
         return self._app_write
 
     def finish(self, app_iter):
-        write = self._app_write
         app_iter = iter(app_iter)
-
         # do nothing until first non-empty item
         for chunk in app_iter:
             if chunk:
-                write(chunk)
+                self._send_headers()
+                self._stdout.write(chunk)
+                self._stdout.writelines(app_iter)
                 break
-
-        if not self._headers_sent:
+        else:
+            # app_iter had no data
             self._headers.append(('Content-length', '0'))
             self._send_headers()
-        else:
-            map(self._request.stdout.write, app_iter)
 
-        self._request.stdout.close()
-        self._request.stderr.close()
+        self._stdout.close()
+        self._stderr.close()
 
     def _app_write(self, chunk):
         if not self._headers_sent:
             self._send_headers()
-        self._request.stdout.write(chunk)
+        self._stdout.write(chunk)
 
     def _send_headers(self):
-        headers = [('Status', self._status)] + self._headers
-        self._request.stdout.writelines(
-            ['{0}: {1}\r\n'.format(name, value)
-             for name, value in headers]
-            + ['\r\n'])
+        self._stdout.writelines('{0}: {1}\r\n'.format(name, value)
+                                for name, value in
+                                [('Status', self._status)] + self._headers)
+        self._stdout.write('\r\n')
         self._headers_sent = True
 
 
@@ -161,11 +158,10 @@ class WSGIRequestHandler(object):
     def __init__(self, app):
         self.app = app
 
-    def __call__(self, request):
-        request = WSGIRequest(request)
-        environ = request.make_environ()
+    def __call__(self, fastcgi_request):
+        request = WSGIRequest(fastcgi_request)
         try:
-            app_iter = self.app(environ, request.start_response)
+            app_iter = self.app(request._environ, request.start_response)
             request.finish(app_iter)
             if hasattr(app_iter, 'close'):
                 app_iter.close()
