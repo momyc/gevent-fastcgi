@@ -68,13 +68,10 @@ class WSGIRefRequestHandler(object):
                                     request.stderr, request.environ)
 
         def log_exception(self, exc_info):
-            logger.exception('WSGI application failed')
-
-        def error_output(self, environ, start_response):
-            start_response('500 Internal Server Error', [
-                ('Content-type', 'text/plain'),
-            ])
-            yield ''
+            try:
+                logger.exception('WSGI application failed')
+            finally:
+                exc_info = None
 
 
 class WSGIRequest(object):
