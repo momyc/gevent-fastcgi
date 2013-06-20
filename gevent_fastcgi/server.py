@@ -173,7 +173,7 @@ class ConnectionHandler(object):
         pairs = ((name, self.capabilities.get(name)) for name, _ in
                  unpack_pairs(record.content))
         content = pack_pairs(
-            (name, str(value)) for name, value in pairs if value)
+            (name, str(value)) for name, value in pairs)
         self.send_record(FCGI_GET_VALUES_RESULT, content)
         self._notify()
 
