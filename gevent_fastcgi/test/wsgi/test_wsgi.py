@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+import sys
 import unittest
 
 from ...wsgi import WSGIRequestHandler, WSGIRefRequestHandler
@@ -50,6 +51,78 @@ class WSGIRequestHandlerBase(object):
 
         assert header.startswith('Status: 200 OK\r\n')
         assert body == ''.join(data)
+
+    def test_iterable_with_close(self):
+
+        class Result(object):
+            def __init__(self, data):
+                self.data = data
+                self.closed = False
+
+            def __iter__(self):
+                return iter(self.data)
+
+            def close(self):
+                self.closed = True
+
+        data = [text_data(1, 73) for _ in range(13)]
+        result = Result(data)
+
+        def app(environ, start_response):
+            start_response('200 OK', [('Content-type', 'text/plain')])
+            return result
+
+        header, body = self._handle_request(app)
+
+        assert header.startswith('Status: 200 OK\r\n')
+        assert body == ''.join(data)
+        assert result.closed
+
+    def test_app_exception(self):
+        def app(environ, start_response):
+            start_response('200 OK', [('Content-type', 'text/plain')])
+            LETS_MAKE_SOME_MESS
+
+        header, body = self._handle_request(app)
+
+        assert header.startswith('Status: 500 ')
+
+    def test_start_response_with_exc_info(self):
+        error_message = 'Bad things happen'
+
+        def app(environ, start_response):
+            try:
+                LETS_MAKE_SOME_MESS
+            except NameError:
+                start_response('200 OK', [('Content-type', 'text/plain')],
+                               sys.exc_info())
+                return [error_message]
+
+        header, body = self._handle_request(app)
+
+        assert header.startswith('Status: 200 OK\r\n')
+        assert body == error_message
+
+    def test_start_response_with_exc_info_headers_sent(self):
+        greetings = 'Hello World!\r\n'
+        error_message = 'Bad things happen'
+
+        def app(environ, start_response):
+            start_response('200 OK', [('Content-type', 'text/plain')])
+            # force headers to be sent
+            yield greetings
+            try:
+                LETS_MAKE_SOME_MESS
+            except NameError:
+                start_response('500 ' + error_message,
+                               [('Content-type', 'text/plain')],
+                               sys.exc_info())
+                yield error_message
+
+        header, body = self._handle_request(app)
+
+        assert header.startswith('Status: 200 OK\r\n'), header
+        assert body.startswith(greetings)
 
     def _handle_request(self, app):
         from ...const import FCGI_STDOUT, FCGI_RESPONDER

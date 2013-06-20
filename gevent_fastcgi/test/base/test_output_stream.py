@@ -1,6 +1,7 @@
 from __future__ import absolute_import, with_statement
 
 import unittest
+from mock import Mock
 from random import randint
 
 from ...const import (
@@ -64,20 +65,36 @@ class StreamTestsBase(object):
 
         self.sock.flip()
 
-        sent = 0
+        received = []
         for record in self.conn:
             assert record.type == stream.record_type
             assert record.request_id == stream.request_id
-            sent += len(record.content)
-        assert sent == len(data)
+            received.append(record.content)
+        assert ''.join(received) == ''.join(data)
 
-    def test_empty_write(self):
+    def test_long_writelines(self):
         stream = self.stream()
 
+        data = [binary_data(37137) for _ in range(3)]
+        stream.writelines(data)
+
+        self.sock.flip()
+
+        received = []
+        for record in self.conn:
+            assert record.type == stream.record_type
+            assert record.request_id == stream.request_id
+            received.append(record.content)
+        assert ''.join(received) == ''.join(data)
+
+    def test_empty_write(self):
+        conn = Mock()
+        conn.write_record.side_effect = AssertionError('Should not be called')
+
+        stream = self.stream(conn=conn)
         stream.write('')
         stream.flush()
-        # should not send any record
-        assert self.sock.output == ''
+        stream.writelines('' for _ in range(13))
 
     def test_close(self):
         stream = self.stream()
@@ -86,6 +103,8 @@ class StreamTestsBase(object):
         stream.close()
         # should fail since stream was closed
         self.assertRaises(IOError, stream.write, '')
+        self.assertRaises(IOError, stream.writelines, (text_data(137)
+                                                       for _ in range(3)))
 
         self.sock.flip()
 
@@ -134,4 +153,4 @@ class StderrStreamTests(StreamTestsBase, unittest.TestCase):
                            if (record.type == stream.record_type
                                and record.request_id == stream.request_id))
 
-        assert data_in == data_out, '{0!r} != {1!r}'.format(data_in, data_out)
+        assert data_in == data_out
