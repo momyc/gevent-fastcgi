@@ -27,7 +27,6 @@ import os
 import errno
 import logging
 from signal import SIGHUP, SIGKILL
-from traceback import format_stack
 
 from zope.interface import implements
 
@@ -51,8 +50,6 @@ from .const import (
     FCGI_REQUEST_COMPLETE,
     FCGI_RESPONDER,
     FCGI_STDIN,
-    FCGI_STDOUT,
-    FCGI_STDERR,
     FCGI_DATA,
     FCGI_UNKNOWN_ROLE,
     FCGI_UNKNOWN_TYPE,
@@ -398,6 +395,7 @@ class FastCGIServer(StreamServer):
                          'attempting to kill them')
 
     def _killing_sequence(self, max_timeout):
+        short_delay = max(0.1, max_timeout / 50)
         for sig in SIGHUP, SIGKILL:
             if not self._workers:
                 raise StopIteration
@@ -406,11 +404,13 @@ class FastCGIServer(StreamServer):
             for pid in self._workers[:]:
                 yield pid, sig
 
-            sleep()
+            sleep(short_delay)
+            self._watcher.kill(self.WakeUp, block=False)
+            sleep(short_delay)
             if self._workers:
                 sleep(max_timeout)
                 self._watcher.kill(self.WakeUp, block=False)
-                sleep()
+                sleep(short_delay)
 
     def _remove_socket_file(self):
         file_name = self.__dict__.pop('_unix_socket', None)
