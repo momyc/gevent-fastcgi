@@ -1,6 +1,6 @@
 #gevent-fastcgi
 
-FastCGI server implementation using **gevent** coroutine-based network library ( <http://www.gevent.org/>).
+FastCGI server implementation using _gevent_ coroutine-based networking library ( <http://www.gevent.org/>).
 No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
 Provides simple request handler API to allow for custom request handlers.
@@ -10,9 +10,9 @@ for running WSGI applications.
 Full support for FastCGI protocol connection multiplexing, i.e. it can serve multiple simulteneous requests
 over single connection. Requires support on Web-server side.
 
-Can be configured to fork multiple processes to better utilize multi-core CPUs.
+Can fork multiple processes to better utilize multi-core CPUs.
 
-Includes adapters for Django and frameworks that use PasteDeploy like Pylons and Pyramid to simplify depolyment.
+Includes adapters for _Django_ and frameworks that use _PasteDeploy_ like _Pylons_ / _Pyramid_ to simplify depolyment.
 
 ## Installation
 
