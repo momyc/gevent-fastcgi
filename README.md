@@ -5,7 +5,7 @@ No need to monkeypatch and slow down your favourite FastCGI server in order to m
 
 Provides simple request handler API to allow for custom request handlers.
 Comes with two WSGI request hadler implementations -- one using standard `wsgiref.handlers.BasicCGIHandler`
-and another using originalm request hadler.
+and another using original request hadler.
 
 Full support for FastCGI protocol connection multiplexing, i.e. it can serve multiple simulteneous requests
 over single connection. Bad news is that none of popular Web-servers implemented this feature.
