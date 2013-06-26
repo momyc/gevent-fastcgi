@@ -47,7 +47,7 @@ handler implementation:
 
 + *wsgiref*
 
-	`gevent_fastcgi.wsgi.WSGIRefRequestHandler` which uses standard `wsgiref.handlers`.
+	`gevent_fastcgi.wsgi.WSGIRefRequestHandler` which uses standard `wsgiref.handlers` will be used to handle requests.
 	Application is expected to be a WSGI-application.
 
 + *fastcgi*
