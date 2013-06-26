@@ -28,17 +28,11 @@ $ easy_install gevent-fastcgi
 
 ```python
 from gevent_fastcgi.server import FastCGIServer
-from gevent_fastcgi.wsgi import WSGIHandler
+from gevent_fastcgi.wsgi import WSGIRequestHandler
 from myapp import wsgi_app
 
 request_handler = WSGIRequestHandler(wsgi_app)
-#request_handler = WSGIRefRequestHandler(wsgi_app)
-#request_handler = FastCGIRequestHandler(fastcgi_app)
-server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16, multiplex_conn=True)
-
-# To use UNIX-socket instead of TCP
-# server = FastCGIServer('/path/to/socket', request_handler, max_conns=4096)
-
+server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16)
 server.serve_forever()
 ```
 ### PasteDeploy
