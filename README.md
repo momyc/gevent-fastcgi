@@ -4,11 +4,11 @@ FastCGI server implementation using _gevent_ coroutine-based networking library 
 No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
 Provides simple request handler API to allow for custom request handlers.
-Comes with `gevent_fastcgi.wsgi.WSGIRequestHandler` that uses standard `wsgiref.handlers.BasicCGIHandler`
-for running WSGI applications.
+Comes with two WSGI request hadler implementations -- one using standard `wsgiref.handlers.BasicCGIHandler`
+and another using originalm request hadler.
 
 Full support for FastCGI protocol connection multiplexing, i.e. it can serve multiple simulteneous requests
-over single connection. Requires support on Web-server side.
+over single connection. Bad news is that none of popular Web-servers implemented this feature.
 
 Can fork multiple processes to better utilize multi-core CPUs.
 
