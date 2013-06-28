@@ -34,7 +34,10 @@ from zope.interface import implements
 from gevent import sleep, spawn, socket, signal, version_info
 from gevent.server import StreamServer
 from gevent.event import Event
-from gevent.coros import Semaphore
+try:
+    from gevent.lock import Semaphore
+except ImportError:
+    from gevent.coros import Semaphore
 
 from .interfaces import IRequest
 from .const import (
