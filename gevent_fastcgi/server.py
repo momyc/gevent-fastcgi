@@ -183,6 +183,7 @@ class ConnectionHandler(object):
 
     def run(self):
         reader = self._spawn(self._reader)
+
         while 1:
             self._event.wait()
             logger.debug('Some greenlet has finished its job')
@@ -194,8 +195,10 @@ class ConnectionHandler(object):
                 break
             self._event.clear()
 
+        reader.kill()
+        reader.join()
+
         logger.debug('Closing connection')
-        # reader will stop too once we close connection
         self.conn.close()
 
     def _handle_request(self, request):
