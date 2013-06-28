@@ -64,8 +64,10 @@ Use it as following:
 use = egg:gevent_fastcgi#wsgi
 host = 127.0.0.1
 port = 4000
-# Unix-socket can be used by specifying path instead of host and port
+# UNIX domain socket can be used by specifying path instead of host and port
 # socket = /path/to/socket
+# Change socket mode
+# socket_mode = 0660
 
 # The following values are used in reply to Web-server on `FCGI_GET_VALUES` request
 #

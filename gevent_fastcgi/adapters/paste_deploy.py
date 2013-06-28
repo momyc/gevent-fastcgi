@@ -31,7 +31,8 @@ def server_params(app, conf, host='127.0.0.1', port=5000, socket=None,
                   **kwargs):
     address = (host, int(port)) if socket is None else socket
     for name in kwargs.keys():
-        if name in ('max_conns', 'num_workers', 'buffer_size', 'backlog'):
+        if name in ('max_conns', 'num_workers', 'buffer_size', 'backlog',
+                    'socket_mode'):
             kwargs[name] = int(kwargs[name])
         elif name.startswith('gevent.monkey.') and asbool(kwargs.pop(name)):
             name = name[14:]

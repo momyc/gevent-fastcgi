@@ -261,9 +261,11 @@ class FastCGIServer(StreamServer):
                  num_workers=1, buffer_size=1024, max_conns=1024, **kwargs):
         # StreamServer does not create UNIX-sockets
         if isinstance(listener, basestring):
-            address_family = socket.AF_UNIX
-            self._unix_socket = listener
-            listener = socket.socket(address_family, socket.SOCK_STREAM)
+            self._socket_file = listener
+            self._socket_mode = kwargs.pop('socket_mode', None)
+            # StreamServer does not like "backlog" with pre-cooked socket
+            self._backlog = kwargs.pop('backlog', max_conns)
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
         super(FastCGIServer, self).__init__(
             listener, self.handle_connection, spawn=max_conns, **kwargs)
@@ -288,9 +290,17 @@ class FastCGIServer(StreamServer):
     def start(self):
         logger.debug('Starting server')
         if not self.started:
-            if hasattr(self, '_unix_socket'):
-                self.socket.bind(self._unix_socket)
-                self.socket.listen(self.max_conns)
+            if hasattr(self, '_socket_file'):
+                if self._socket_mode is not None:
+                    umask = os.umask(0)
+                    try:
+                        self.socket.bind(self._socket_file)
+                        os.chmod(self._socket_file, self._socket_mode)
+                    finally:
+                        os.umask(umask)
+                else:
+                    self.socket.bind(self._socket_file)
+                self.socket.listen(self._backlog)
 
             super(FastCGIServer, self).start()
 
@@ -416,15 +426,15 @@ class FastCGIServer(StreamServer):
                 sleep(short_delay)
 
     def _remove_socket_file(self):
-        file_name = self.__dict__.pop('_unix_socket', None)
-        if file_name:
+        socket_file = self.__dict__.pop('_socket_file', None)
+        if socket_file:
             try:
-                logger.debug('Removing socket-file {0}'.format(file_name))
-                os.unlink(file_name)
+                logger.debug('Removing socket-file {0}'.format(socket_file))
+                os.unlink(socket_file)
             except OSError:
                 logger.exception(
                     'Failed to remove socket file {0}'
-                    .format(file_name))
+                    .format(socket_file))
 
     class WakeUp(Exception):
         """ Used to signal watcher greenlet
