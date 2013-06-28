@@ -27,6 +27,7 @@ import os
 import errno
 import logging
 from signal import SIGHUP, SIGKILL
+import atexit
 
 from zope.interface import implements
 
@@ -258,13 +259,16 @@ class FastCGIServer(StreamServer):
     """
 
     def __init__(self, listener, request_handler, role=FCGI_RESPONDER,
-                 num_workers=1, buffer_size=1024, max_conns=1024, **kwargs):
+                 num_workers=1, buffer_size=1024, max_conns=1024,
+                 socket_mode=None, **kwargs):
         # StreamServer does not create UNIX-sockets
         if isinstance(listener, basestring):
             self._socket_file = listener
-            self._socket_mode = kwargs.pop('socket_mode', None)
+            self._socket_mode = socket_mode
             # StreamServer does not like "backlog" with pre-cooked socket
-            self._backlog = kwargs.pop('backlog', max_conns)
+            self._backlog = kwargs.pop('backlog', None)
+            if self._backlog is None:
+                self._backlog = max_conns
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
         super(FastCGIServer, self).__init__(
@@ -300,7 +304,9 @@ class FastCGIServer(StreamServer):
                         os.umask(umask)
                 else:
                     self.socket.bind(self._socket_file)
+
                 self.socket.listen(self._backlog)
+                atexit.register(self._remove_socket_file)
 
             super(FastCGIServer, self).start()
 
@@ -376,13 +382,18 @@ class FastCGIServer(StreamServer):
             self._cleanup()
 
     def _cleanup(self):
-        if getattr(self, '_workers') is not None:
-            # master process
-            logger.debug('Cleaning up')
-            try:
-                self._kill_workers()
-            finally:
-                self._remove_socket_file()
+        if hasattr(self, '_workers'):
+            # it was initialized
+            if self._workers is not None:
+                # master process
+                logger.debug('Cleaning up')
+                try:
+                    self._kill_workers()
+                finally:
+                    self._remove_socket_file()
+        else:
+            # _workers was not initialized but it's still master process
+            self._remove_socket_file()
 
     def _kill_workers(self, kill_timeout=2):
         for pid, sig in self._killing_sequence(kill_timeout):
