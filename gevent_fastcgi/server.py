@@ -376,7 +376,7 @@ class FastCGIServer(StreamServer):
             self._cleanup()
 
     def _cleanup(self):
-        if self._workers is not None:
+        if getattr(self, '_workers') is not None:
             # master process
             logger.debug('Cleaning up')
             try:
