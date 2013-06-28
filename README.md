@@ -1,18 +1,18 @@
 #gevent-fastcgi
 
-FastCGI server implementation using **gevent** coroutine-based network library ( <http://www.gevent.org/>).
+FastCGI server implementation using _gevent_ coroutine-based networking library ( <http://www.gevent.org/>).
 No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
 Provides simple request handler API to allow for custom request handlers.
-Comes with `gevent_fastcgi.wsgi.WSGIRequestHandler` that uses standard `wsgiref.handlers.BasicCGIHandler`
-for running WSGI applications.
+Comes with two WSGI request hadler implementations -- one using standard `wsgiref.handlers.BasicCGIHandler`
+and another using original request hadler.
 
 Full support for FastCGI protocol connection multiplexing, i.e. it can serve multiple simulteneous requests
-over single connection. Requires support on Web-server side.
+over single connection. Bad news is that none of popular Web-servers implemented this feature.
 
-Can be configured to fork multiple processes to better utilize multi-core CPUs.
+Can fork multiple processes to better utilize multi-core CPUs.
 
-Includes adapters for Django and frameworks that use PasteDeploy like Pylons and Pyramid to simplify depolyment.
+Includes adapters for _Django_ and frameworks that use _PasteDeploy_ like _Pylons_ / _Pyramid_ to simplify depolyment.
 
 ## Installation
 
@@ -28,17 +28,11 @@ $ easy_install gevent-fastcgi
 
 ```python
 from gevent_fastcgi.server import FastCGIServer
-from gevent_fastcgi.wsgi import WSGIHandler
+from gevent_fastcgi.wsgi import WSGIRequestHandler
 from myapp import wsgi_app
 
 request_handler = WSGIRequestHandler(wsgi_app)
-#request_handler = WSGIRefRequestHandler(wsgi_app)
-#request_handler = FastCGIRequestHandler(fastcgi_app)
-server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16, multiplex_conn=True)
-
-# To use UNIX-socket instead of TCP
-# server = FastCGIServer('/path/to/socket', request_handler, max_conns=4096)
-
+server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16)
 server.serve_forever()
 ```
 ### PasteDeploy
@@ -53,7 +47,7 @@ handler implementation:
 
 + *wsgiref*
 
-	`gevent_fastcgi.wsgi.WSGIRefRequestHandler` which uses standard `wsgiref.handlers`.
+	`gevent_fastcgi.wsgi.WSGIRefRequestHandler` which uses standard `wsgiref.handlers` will be used to handle requests.
 	Application is expected to be a WSGI-application.
 
 + *fastcgi*
