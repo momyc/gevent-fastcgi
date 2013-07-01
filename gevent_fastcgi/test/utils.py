@@ -109,7 +109,7 @@ class WSGIApplication(object):
         start_response('200 OK', headers)
 
         if self.response is None:
-            response = stdin.read() or self.data
+            response = [stdin.read()] or self.data
         elif isinstance(self.response, basestring):
             response = [self.response]
         else:
