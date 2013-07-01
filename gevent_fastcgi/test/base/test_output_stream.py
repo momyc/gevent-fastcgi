@@ -1,7 +1,6 @@
 from __future__ import absolute_import, with_statement
 
 import unittest
-from mock import Mock
 from random import randint
 
 from ...const import (
@@ -88,8 +87,9 @@ class StreamTestsBase(object):
         assert ''.join(received) == ''.join(data)
 
     def test_empty_write(self):
-        conn = Mock()
-        conn.write_record.side_effect = AssertionError('Should not be called')
+        conn = self.conn
+        # calling this would raise AttributeError
+        conn.write_record = None
 
         stream = self.stream(conn=conn)
         stream.write('')
