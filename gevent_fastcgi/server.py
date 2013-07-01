@@ -395,7 +395,8 @@ class FastCGIServer(StreamServer):
                 os._exit(0)
 
     def _watch_workers(self, check_interval=5):
-        while True:
+        keep_running = True
+        while keep_running:
             self._start_workers()
 
             try:
@@ -404,22 +405,22 @@ class FastCGIServer(StreamServer):
                     self._reap_workers()
                 except self.Stop:
                     logger.debug('Waiting for all workers to exit')
+                    keep_running = False
                     self._reap_workers(True)
             except OSError, e:
                 if e.errno != errno.ECHILD:
                     logger.exception('Failed to wait for any worker to exit')
                 else:
-                    logger.debug('All workers have exited')
-                    break
+                    logger.debug('No alive workers left')
 
     def _reap_workers(self, block=False):
-        flags = block and os.WNOHANG or 0
+        flags = 0 if block else os.WNOHANG
         while True:
             pid, status = os.waitpid(-1, flags)
             if pid == 0:
                 break
             elif pid in self._workers:
-                logger.debug('Worker {0} is dead'.format(pid))
+                logger.debug('Worker {0} exited'.format(pid))
                 self._workers.remove(pid)
 
     def _cleanup(self):

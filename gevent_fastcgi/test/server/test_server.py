@@ -228,6 +228,24 @@ class ServerTests(unittest.TestCase):
         headers, body = response.parse()
         assert len(body) == 0, repr(body)
 
+    def test_restart_workers(self):
+        from gevent import sleep
+
+        with start_wsgi_server(num_workers=4) as server:
+            assert server.num_workers == 4
+            workers = server._workers
+            assert len(workers) == server.num_workers
+            worker = workers[2]
+            os.kill(worker, signal.SIGKILL)
+            sleep(0.1)
+            try:
+                os.kill(worker, 0)
+            except OSError, e:
+                assert e.errno == errno.ESRCH
+            sleep(5)
+            assert len(server._workers) == server.num_workers
+            assert worker not in server._workers
+
     # Helpers
 
     def _run_get_values(self, conn):
