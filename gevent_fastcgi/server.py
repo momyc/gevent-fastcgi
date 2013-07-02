@@ -149,6 +149,7 @@ class ConnectionHandler(object):
 
     def run(self):
         reader = spawn(self.read_records)
+        reader.link(self._report_finished_job)
         event = self._job_is_done
 
         while True:
