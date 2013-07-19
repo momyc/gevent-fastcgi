@@ -1,18 +1,20 @@
 #gevent-fastcgi
 
-FastCGI server implementation using _gevent_ coroutine-based networking library ( <http://www.gevent.org/>).
+[FastCGI](http://fastcgi.com/) server implementation using [gevent](http://www.gevent.org/) coroutine-based networking library.
 No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
 Provides simple request handler API to allow for custom request handlers.
 Comes with two WSGI request hadler implementations -- one using standard `wsgiref.handlers.BasicCGIHandler`
 and another using original request hadler.
 
-Full support for FastCGI protocol connection multiplexing, i.e. it can serve multiple simulteneous requests
+Full support for FastCGI protocol [connection multiplexing](http://fastcgi.nongnu.org/#multiplexing), i.e. it can serve multiple simulteneous requests
 over single connection. Bad news is that none of popular Web-servers implemented this feature.
 
 Can fork multiple processes to better utilize multi-core CPUs.
 
-Includes adapters for _Django_ and frameworks that use _PasteDeploy_ like _Pylons_ / _Pyramid_ to simplify depolyment.
+Includes adapters for [Django](http://www.djangoproject.com/) and frameworks that use 
+[PasteDeploy](http://pythonpaste.org/deploy/) like [Pylons/Pyramid](http://pylonsproject.org/) and 
+[TurboGears](http://turbogears.org/) to simplify depolyment.
 
 ## Installation
 
@@ -35,7 +37,7 @@ request_handler = WSGIRequestHandler(wsgi_app)
 server = FastCGIServer(('127.0.0.1', 4000), request_handler, max_conns=1024, num_workers=16)
 server.serve_forever()
 ```
-### PasteDeploy
+### With [PasteDeploy](http://pythonpaste.org/deploy/) and friends
 
 Gevent-fastcgi defines three `paste.server_runner` entry points. Each of them will run FastCGIServer with different request
 handler implementation:
@@ -87,7 +89,7 @@ num_workers = 8
 #gevent.monkey.patch_all = yes
 ...
 ```
-### Django
+### [Django](http://djangoproject.com/) adapter
 
 Add `gevent_fastcgi.adapters.django` to INSTALLED_APPS of settings.py then run the following command (replace host:port with desired values)
 ```
