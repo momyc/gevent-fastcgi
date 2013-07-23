@@ -22,6 +22,9 @@ from optparse import make_option
 from django.core.management import BaseCommand, CommandError
 
 
+MONKEY_PATCH_NAMES = ('os', 'socket', 'thread', 'select', 'time', 'ssl', 'all')
+
+
 class Command(BaseCommand):
     args = '<host>:<port> | <socket file>'
     help = 'Start gevent-fastcgi server'
@@ -38,10 +41,10 @@ class Command(BaseCommand):
                     metavar='NUM_WORKERS',
                     help='Number of worker processes (default %default)',
                     ),
-        make_option('--backlog', type='int', dest='backlog',
-                    metavar='LISTEN_BACKLOG',
-                    help='Listen backlog (default %default)',
-                    ),
+        make_option('--monkey-patch', dest='monkey_patch',
+                    help='Comma separated list of function names from '
+                    'gevent.monkey module. Allowed names are: ' + ', '.join(
+                        map('"{0}"'.format, MONKEY_PATCH_NAMES))),
         make_option('--socket-mode', type='int', dest='socket_mode',
                     metavar='SOCKET_MODE',
                     help='Socket file mode',
@@ -55,9 +58,6 @@ class Command(BaseCommand):
                     help='stdout in daemon mode (default sys.devnull)'),
         make_option('--stderr', dest='err_log', metavar='STDERR',
                     help='stderr in daemon mode (default sys.devnull)'),
-        make_option('--umask', dest='umask', type='int', default=022,
-                    metavar='UMASK', help='umask in daemon mode (default 022)',
-                    ),
     )
 
     def handle(self, *args, **options):
@@ -76,6 +76,7 @@ class Command(BaseCommand):
 
         try:
             host, port = bind_address.split(':', 1)
+            port = int(port)
         except ValueError:
             socket_dir = dirname(bind_address)
             if not isdir(socket_dir):
@@ -83,10 +84,23 @@ class Command(BaseCommand):
                     'Please create directory for socket file first %r' %
                     dirname(socket_dir))
         else:
-            try:
-                bind_address = (host, int(port))
-            except ValueError:
-                raise CommandError('Invalid binding address %r' % bind_address)
+            if 'socket_mode' in options:
+                raise CommandError('--socket-mode option can only be used '
+                                   'with Unix domain sockets. Either use '
+                                   'socket file path as address or do not '
+                                   'specify --socket-mode option')
+            bind_address = (host, port)
+
+        if 'monkey_patch' in options:
+            module = __import__('gevent.monkey', fromlist=['*'])
+            names = filter(None, map(
+                str.strip, options['monkey_patch'].split(',')))
+            for name in names:
+                if name not in MONKEY_PATCH_NAMES:
+                    raise CommandError('Unknown name "{0}" in --monkey-patch'
+                                       'option'.format(name))
+                patch_func = getattr(module, 'patch_{0}'.format(name))
+                patch_func()
 
         if options['daemonize']:
             from django.utils.daemonize import become_daemon
@@ -98,8 +112,7 @@ class Command(BaseCommand):
 
         kwargs = dict((
             (name, value) for name, value in options.iteritems() if name in (
-                'num_workers', 'max_conns', 'buffer_size', 'backlog',
-                'socket_mode')))
+                'num_workers', 'max_conns', 'buffer_size', 'socket_mode')))
 
         app = WSGIHandler()
         request_handler = WSGIRequestHandler(app)
