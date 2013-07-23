@@ -84,23 +84,25 @@ class Command(BaseCommand):
                     'Please create directory for socket file first %r' %
                     dirname(socket_dir))
         else:
-            if 'socket_mode' in options:
+            if options['socket_mode'] is not None:
                 raise CommandError('--socket-mode option can only be used '
                                    'with Unix domain sockets. Either use '
                                    'socket file path as address or do not '
                                    'specify --socket-mode option')
             bind_address = (host, port)
 
-        if 'monkey_patch' in options:
-            module = __import__('gevent.monkey', fromlist=['*'])
-            names = filter(None, map(
-                str.strip, options['monkey_patch'].split(',')))
-            for name in names:
-                if name not in MONKEY_PATCH_NAMES:
-                    raise CommandError('Unknown name "{0}" in --monkey-patch'
-                                       'option'.format(name))
-                patch_func = getattr(module, 'patch_{0}'.format(name))
-                patch_func()
+        if options['monkey_patch']:
+            names = filter(
+                None, map(str.strip, options['monkey_patch'].split(',')))
+            if names:
+                module = __import__('gevent.monkey', fromlist=['*'])
+                for name in names:
+                    if name not in MONKEY_PATCH_NAMES:
+                        raise CommandError(
+                            'Unknown name "{0}" in --monkey-patch option'
+                            .format(name))
+                    patch_func = getattr(module, 'patch_{0}'.format(name))
+                    patch_func()
 
         if options['daemonize']:
             from django.utils.daemonize import become_daemon
