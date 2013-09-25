@@ -1,2 +1,3 @@
 recursive-exclude gevent_fastcgi/test *
 exclude gevent_fastcgi/client.py
+include logging.ini
