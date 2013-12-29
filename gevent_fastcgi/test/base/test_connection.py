@@ -51,7 +51,7 @@ class ConnectionTests(unittest.TestCase):
     def test_partial_read(self):
         conn = Connection(self.sock)
 
-        data = binary_data(1, FCGI_RECORD_HEADER_LEN - 1)
+        data = binary_data(FCGI_RECORD_HEADER_LEN - 1)
 
         self.sock.sendall(data)
 

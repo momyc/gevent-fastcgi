@@ -44,7 +44,7 @@ class StreamTestsBase(object):
 
     def test_write(self):
         stream = self.stream()
-        data = [binary_data(1, 1024) for _ in range(13)]
+        data = [binary_data(1024, 1) for _ in range(13)]
 
         map(stream.write, data)
 
