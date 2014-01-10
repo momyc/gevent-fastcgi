@@ -46,6 +46,7 @@ This is how to use gevent-fastcgi in stand-alone mode:
             start_response('200 OK', [('Content-type', 'text/plain')])
             yield 'Hello World!'
 
+
         request_handler = WSGIRequestHandler(wsgi_app)
         server = FastCGIServer(('127.0.0.1', 4000), request_handler, num_workers=4)
         server.serve_forever()
