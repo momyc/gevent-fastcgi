@@ -155,49 +155,49 @@ Following is sample of custom request handler implementation:
 
         class CGIRequestHandler(object):
 
-        implements(IRequestHandler)
+            implements(IRequestHandler)
 
-        def __init__(self, root, buf_size=1024):
-            self.root = os.path.abspath(root)
-            self.buf_size = buf_size
+            def __init__(self, root, buf_size=1024):
+                self.root = os.path.abspath(root)
+                self.buf_size = buf_size
 
-        def __call__(self, request):
-            script_name = request.environ['SCRIPT_NAME']
-            if script_name.startswith('/'):
-                script_name = script_name[1:]
-                script_filename = os.path.join(self.root, script_name)
+            def __call__(self, request):
+                script_name = request.environ['SCRIPT_NAME']
+                if script_name.startswith('/'):
+                    script_name = script_name[1:]
+                    script_filename = os.path.join(self.root, script_name)
 
-            if script_filename.startswith(self.root) and
-            os.path.isfile(script_filename) and
-            os.access(script_filename, os.X_OK):
-                proc = Popen(script_filename, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-                joinall((spawn(self.copy_stream, src, dest) for src, dest in [
-                    (request.stdin, proc.stdin),
-                    (proc.stdout, request.stdout),
-                    (proc.stderr, request.stderr),
-                ]))
-            else:
-                # report an error
-                request.stderr.write('Cannot locate or execute CGI-script %s' % script_filename)
+                if script_filename.startswith(self.root) and
+                os.path.isfile(script_filename) and
+                os.access(script_filename, os.X_OK):
+                    proc = Popen(script_filename, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+                    joinall((spawn(self.copy_stream, src, dest) for src, dest in [
+                        (request.stdin, proc.stdin),
+                        (proc.stdout, request.stdout),
+                        (proc.stderr, request.stderr),
+                    ]))
+                else:
+                    # report an error
+                    request.stderr.write('Cannot locate or execute CGI-script %s' % script_filename)
 
-            # and send a reply
-            request.stdout.write('\r\n'.join((
-                'Status: 404 Not Found',
-                'Content-Type: text/plain',
-                '',
-                'No resource can be found for URI %s' % request.environ['REQUEST_URI'],
-            )))
+                # and send a reply
+                request.stdout.write('\r\n'.join((
+                    'Status: 404 Not Found',
+                    'Content-Type: text/plain',
+                    '',
+                    'No resource can be found for URI %s' % request.environ['REQUEST_URI'],
+                )))
 
-        def copy_stream(self, src, dest):
-            buf_size = self.buf_size
-            read = src.read
-            write = dest.write
+            def copy_stream(self, src, dest):
+                buf_size = self.buf_size
+                read = src.read
+                write = dest.write
 
-            while True:
-                buf = read(buf_size)
-                if not buf:
-                    break
-                write(buf)
+                while True:
+                    buf = read(buf_size)
+                    if not buf:
+                        break
+                    write(buf)
 
 
         if __name__ == '__main__':
@@ -206,5 +206,4 @@ Following is sample of custom request handler implementation:
             address = ('127.0.0.1', 8000)
             handler = CGIRequestHandler('/var/www/cgi-bin')
             server = FastCGIServer(address, handler)
-
             server.serve_forever()
