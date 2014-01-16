@@ -213,7 +213,7 @@ Contributors
 
 This project could not be where it is now without help of the following great people:
 
-`David Galeano <https://github.com/davidgaleano>`
-`Lucas Clemente Vella <https://github.com/lvella>`
+        * `David Galeano <https://github.com/davidgaleano>`
+        * `Lucas Clemente Vella <https://github.com/lvella>`
 
 Thank you guys for all your help!
