@@ -207,3 +207,13 @@ Following is sample of custom request handler implementation:
             handler = CGIRequestHandler('/var/www/cgi-bin')
             server = FastCGIServer(address, handler)
             server.serve_forever()
+
+Contributors
+------------
+
+This project could not be where it is now without help of the following great people:
+
+`David Galeano <https://github.com/davidgaleano>`
+`Lucas Clemente Vella <https://github.com/lvella>`
+
+Thank you guys for all your help!
