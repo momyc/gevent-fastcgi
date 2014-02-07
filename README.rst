@@ -180,13 +180,13 @@ Following is sample of custom request handler implementation:
                     # report an error
                     request.stderr.write('Cannot locate or execute CGI-script %s' % script_filename)
 
-                # and send a reply
-                request.stdout.write('\r\n'.join((
-                    'Status: 404 Not Found',
-                    'Content-Type: text/plain',
-                    '',
-                    'No resource can be found for URI %s' % request.environ['REQUEST_URI'],
-                )))
+                    # and send a reply
+                    request.stdout.write('\r\n'.join((
+                        'Status: 404 Not Found',
+                        'Content-Type: text/plain',
+                        '',
+                        'No resource can be found for URI %s' % request.environ['REQUEST_URI'],
+                    )))
 
             def copy_stream(self, src, dest):
                 buf_size = self.buf_size
