@@ -147,7 +147,7 @@ class ConnectionHandlerTests(unittest.TestCase):
         record = Record(FCGI_PARAMS, pack_pairs(env), request.id)
 
         handler.handle_params_record(record, request)
-        record.content = ''
+        record = Record(FCGI_PARAMS, '', request.id)
         handler.handle_params_record(record, request)
 
         assert request.environ == env
@@ -189,7 +189,7 @@ class ConnectionHandlerTests(unittest.TestCase):
         # let it actually start
         lock.wait(3)
 
-        record = Record(FCGI_ABORT_REQUEST, request_id=request.id)
+        record = Record(FCGI_ABORT_REQUEST, '', request.id)
         handler.handle_abort_request_record(record, request)
 
         assert request.greenlet.dead

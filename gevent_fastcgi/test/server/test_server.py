@@ -35,6 +35,7 @@ from ...const import (
     FCGI_STDOUT,
     FCGI_UNKNOWN_ROLE,
     FCGI_UNKNOWN_TYPE,
+    FCGI_NULL_REQUEST_ID,
 )
 from ...base import Record
 from ...utils import (
@@ -250,8 +251,9 @@ class ServerTests(unittest.TestCase):
 
     def _run_get_values(self, conn):
         names = (FCGI_MAX_CONNS, FCGI_MAX_REQS, FCGI_MPXS_CONNS)
-        get_values_record = Record(FCGI_GET_VALUES, pack_pairs(
-            dict.fromkeys(names, '')))
+        get_values_record = Record(FCGI_GET_VALUES,
+                                   pack_pairs(dict.fromkeys(names, '')),
+                                   FCGI_NULL_REQUEST_ID)
 
         conn.write_record(get_values_record)
         conn.done_writing()

@@ -21,6 +21,7 @@
 from __future__ import with_statement
 
 import logging
+from collections import namedtuple
 from tempfile import SpooledTemporaryFile
 
 from zope.interface import implements
@@ -110,14 +111,9 @@ def _reader_generator(read, buf_size):
         size = (yield data)
 
 
-class Record(object):
 
-    __slots__ = ('type', 'content', 'request_id')
 
-    def __init__(self, type, content='', request_id=FCGI_NULL_REQUEST_ID):
-        self.type = type
-        self.content = content
-        self.request_id = request_id
+class Record(namedtuple('Record', ('type', 'content', 'request_id'))):
 
     def __str__(self):
         return '<Record {0}, req id {1}, {2} bytes>'.format(
@@ -244,16 +240,20 @@ class OutputStream(object):
             return
 
         write_record = self.conn.write_record
+        record_type = self.record_type
+        request_id = self.request_id
         size = len(data)
-        record = Record(self.record_type, data, self.request_id)
 
         if size <= FCGI_MAX_CONTENT_LEN:
+            record = Record(record_type, data, request_id)
             write_record(record)
         else:
             data = buffer(data)
             sent = 0
             while sent < size:
-                record.content = data[sent:sent + FCGI_MAX_CONTENT_LEN]
+                record = Record(record_type,
+                                data[sent:sent + FCGI_MAX_CONTENT_LEN],
+                                request_id)
                 write_record(record)
                 sent += FCGI_MAX_CONTENT_LEN
 
@@ -262,7 +262,8 @@ class OutputStream(object):
             raise IOError('Writing to closed stream {0}'.format(self))
 
         write_record = self.conn.write_record
-        record = Record(self.record_type, '', self.request_id)
+        record_type = self.record_type
+        request_id = self.request_id
         buf = []
         remainder = FCGI_MAX_CONTENT_LEN
 
@@ -275,7 +276,7 @@ class OutputStream(object):
 
             if line_len >= remainder:
                 buf.append(line[:remainder])
-                record.content = ''.join(buf)
+                record = Record(record_type, ''.join(buf), request_id)
                 write_record(record)
                 buf = [line[remainder:]]
                 remainder = FCGI_MAX_CONTENT_LEN
@@ -284,7 +285,7 @@ class OutputStream(object):
                 remainder -= line_len
 
         if buf:
-            record.content = ''.join(buf)
+            record = Record(record_type, ''.join(buf), request_id)
             write_record(record)
 
     def flush(self):
@@ -310,10 +311,11 @@ class StdoutStream(OutputStream):
             if self.closed:
                 raise IOError('Writing to closed stream {0}'.format(self))
             write_record = self.conn.write_record
-            record = Record(self.record_type, '', self.request_id)
+            record_type = self.record_type
+            request_id = self.request_id
             for line in lines:
                 if line:
-                    record.content = line
+                    record = Record(record_type, line, request_id)
                     write_record(record)
 
 
