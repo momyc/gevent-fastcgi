@@ -100,40 +100,40 @@ class Request(object):
 class ServerConnection(Connection):
 
     def __init__(self, *args, **kw):
-        Connection.__init__(self, *args, **kw)
+        super(ServerConnection, self).__init__(*args, **kw)
         self.lock = Semaphore()
 
     def write_record(self, record):
         # We must serialize access for possible multiple request greenlets
-        self.lock.acquire()
-        try:
-            Connection.write_record(self, record)
-        finally:
-            self.lock.release()
+        with self.lock:
+            super(ServerConnection, self).write_record(record)
 
 
 HANDLE_RECORD_ATTR = '_handle_record_type'
 
 
 def record_handler(record_type):
-    def decorator(handler_method):
-        setattr(handler_method, HANDLE_RECORD_ATTR, record_type)
-        return handler_method
+    """
+    Mark method as a tecord handler of this record type
+    """
+    def decorator(method):
+        setattr(method, HANDLE_RECORD_ATTR, record_type)
+        return method
     return decorator
 
 
-def collect_record_handlers(cls):
-    handlers = {}
-    for attr in (getattr(cls, name) for name in dir(cls)):
-        record_type = getattr(attr, HANDLE_RECORD_ATTR, None)
-        if record_type is not None:
-            handlers[record_type] = attr
-    cls._record_handlers = handlers
-    return cls
-
-
-@collect_record_handlers
 class ConnectionHandler(object):
+
+    class __metaclass__(type):
+        """
+        Collect record handlers during class construction
+        """
+        def __new__(cls, name, bases, attrs):
+            attrs['_record_handlers'] = dict(
+                (getattr(method, HANDLE_RECORD_ATTR), method)
+                for name, method in attrs.items()
+                if hasattr(method, HANDLE_RECORD_ATTR))
+            return type(name, bases, attrs)
 
     def __init__(self, conn, role, capabilities, request_handler):
         conn._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
