@@ -170,8 +170,6 @@ class ConnectionHandler(object):
         try:
             logger.debug('Handling request {0}'.format(request.id))
             self.request_handler(request)
-            request.stdout.close()
-            request.stderr.close()
         except:
             logger.exception('Request handler raised exception')
             raise
@@ -181,6 +179,8 @@ class ConnectionHandler(object):
     def end_request(self, request, request_status=FCGI_REQUEST_COMPLETE,
                     app_status=0):
         try:
+            request.stdout.close()
+            request.stderr.close()
             self.send_record(FCGI_END_REQUEST, pack_end_request(
                 app_status, request_status), request.id)
         finally:
