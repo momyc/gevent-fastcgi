@@ -1,76 +1,41 @@
 from __future__ import absolute_import
 
-import os
+import sys
 import unittest
+from itertools import product
 
-from ..utils import binary_data
+from gevent_fastcgi.utils import pack_pairs, unpack_pairs
+
+
+SHORT_STR = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+LONG_STR = SHORT_STR * 32
+STRINGS = ('', SHORT_STR, LONG_STR)
 
 
 class UtilsTests(unittest.TestCase):
 
     def test_pack_unpack_pairs(self):
-        from ...utils import pack_pairs, unpack_pairs
+        pairs = tuple(product(STRINGS, STRINGS))
 
-        pairs = os.environ.items()
-        for pair_in, pair_out in zip(pairs, unpack_pairs(pack_pairs(pairs))):
-            assert pair_in == pair_out
+        assert pairs == tuple(unpack_pairs(pack_pairs(pairs)))
 
-        pairs = list(unpack_pairs('\1\2ABC\2\5DEFGHJK'))
-        assert pairs == [('A', 'BC'), ('DE', 'FGHJK')]
 
-    def test_unpack_pairs_fail(self):
-        from ...utils import unpack_pairs
+class NoSpeedupsUtilsTests(UtilsTests):
+    """
+    Makes importing gevent_fastcgi.speedups fail with ImportError to enforce
+    usage of Python implementation of pack_pairs/unpack_pairs
+    """
+    def setUp(self):
+        sys.modules['gevent_fastcgi.speedups'] = None
+        if 'gevent_fastcgi.utils' in sys.modules:
+            sys.modules['gevent_fastcgi.utils'] = reload(
+                sys.modules['gevent_fastcgi.utils'])
 
-        for data in (
-            '\1',
-            '\1\1',
-            '\1\1A',
-            '\5\2AAA',
-            '\5\3AAAAA',
-            '\5\3AAAAABB',
-            '\x80\0\0\0\2\0',
-        ):
-            with self.assertRaises(ValueError):
-                dict(unpack_pairs(data))
+    def tearDown(self):
+        del sys.modules['gevent_fastcgi.speedups']
+        sys.modules['gevent_fastcgi.utils'] = reload(
+            sys.modules['gevent_fastcgi.utils'])
 
-    def test_pack_unpack_header(self):
-        from ...const import FCGI_VERSION, FCGI_BEGIN_REQUEST
-        from ...utils import pack_header, unpack_header
 
-        raw_data = (FCGI_VERSION, FCGI_BEGIN_REQUEST, 31731, 17317, 137)
-        assert raw_data == unpack_header(pack_header(*raw_data))
-
-    def test_pack_unpack_begin_request(self):
-        from ...const import FCGI_AUTHORIZER, FCGI_KEEP_CONN
-        from ...utils import pack_begin_request, unpack_begin_request
-
-        raw_data = (FCGI_AUTHORIZER, FCGI_KEEP_CONN)
-        assert raw_data == unpack_begin_request(pack_begin_request(*raw_data))
-
-    def test_pack_unpack_end_request(self):
-        from ...const import FCGI_UNKNOWN_ROLE
-        from ...utils import pack_end_request, unpack_end_request
-
-        raw_data = (924, FCGI_UNKNOWN_ROLE)
-        assert raw_data == unpack_end_request(pack_end_request(*raw_data))
-
-    def test_pack_unpack_unknown_type(self):
-        from ...utils import pack_unknown_type, unpack_unknown_type
-
-        raw_data = (173,)
-        assert raw_data == unpack_unknown_type(pack_unknown_type(*raw_data))
-
-    def test_buffered_reader(self):
-        from ...base import BufferedReader
-
-        sizes = [1, 13, 137, 1371, 13713]
-        data = binary_data(max(sizes) + 137)
-
-        def read(size):
-            return data[:size]
-
-        for size in sizes:
-            reader = BufferedReader(read, 173)
-            chunk = reader.read_bytes(size)
-            assert len(chunk) == size
-            assert data.startswith(chunk)
+if __name__ == '__main__':
+    unittest.main()

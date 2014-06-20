@@ -1,224 +1,257 @@
 from __future__ import absolute_import
 
 import unittest
-import random
+import mock
+from itertools import count
 
-from ...base import InputStream, Record
-from ...utils import (
+from gevent import sleep, spawn, event
+
+from gevent_fastcgi.const import (
+    FCGI_RESPONDER,
+    FCGI_FILTER,
+    FCGI_AUTHORIZER,
+    FCGI_MAX_CONNS,
+    FCGI_MAX_REQS,
+    FCGI_MPXS_CONNS,
+    FCGI_NULL_REQUEST_ID,
+    FCGI_KEEP_CONN,
+    FCGI_GET_VALUES,
+    FCGI_GET_VALUES_RESULT,
+    FCGI_BEGIN_REQUEST,
+    FCGI_END_REQUEST,
+    FCGI_ABORT_REQUEST,
+    FCGI_UNKNOWN_ROLE,
+    FCGI_UNKNOWN_TYPE,
+    FCGI_PARAMS,
+    FCGI_STDIN,
+    FCGI_STDOUT,
+    FCGI_STDERR,
+    FCGI_DATA,
+)
+from gevent_fastcgi.base import InputStream, Record
+from gevent_fastcgi.utils import (
     pack_begin_request,
     pack_pairs,
     unpack_pairs,
     unpack_end_request,
+    unpack_unknown_type,
 )
-from ...const import (
-    FCGI_RESPONDER,
-    FCGI_NULL_REQUEST_ID,
-)
-
-try:
-    from ...server import ConnectionHandler, ServerConnection
-except ImportError:
-    logger.exception('Failed to import classes')
-
-    class TestConnectionHandler(object):
-        pass
-else:
-    class TestConnectionHandler(ConnectionHandler):
-        """ ConnectionHandler that intersepts send_record calls.
-
-        It also has some handy methods used by tests
-        """
-        def __init__(self, conn=None, role=FCGI_RESPONDER, capabilities={},
-                     request_handler=None):
-            from ..utils import MockSocket
-
-            if conn is None:
-                conn = ServerConnection(MockSocket())
-            if request_handler is None:
-                request_handler = self.default_request_handler
-            ConnectionHandler.__init__(
-                self, conn, role, capabilities, request_handler)
-            self.records_sent = []
-
-        def send_record(self, record_type, content='',
-                        request_id=FCGI_NULL_REQUEST_ID):
-            self.records_sent.append(Record(record_type, content,
-                                            request_id))
-
-        def begin_request(self, request_id=None, role=None, flags=0):
-            from ...const import FCGI_BEGIN_REQUEST
-
-            if request_id is None:
-                request_id = random_request_id()
-            if role is None:
-                role = self.role
-            record = Record(FCGI_BEGIN_REQUEST,
-                            pack_begin_request(role, flags), request_id)
-            self.handle_begin_request_record(record)
-
-            return self.requests.get(request_id)
-
-        @staticmethod
-        def default_request_handler(request):
-            pass
-
-
-def random_request_id():
-    return random.randint(1, 65535)
+from gevent_fastcgi.server import ConnectionHandler, ServerConnection
+from ..utils import pack_env
 
 
 class ConnectionHandlerTests(unittest.TestCase):
 
-    def test_send_record(self):
-        from ...const import (FCGI_GET_VALUES, FCGI_MAX_CONNS, FCGI_MAX_REQS,
-                              FCGI_MPXS_CONNS)
-
-        record_type = FCGI_GET_VALUES
-        content = pack_pairs((
-            (FCGI_MAX_CONNS, ''),
-            (FCGI_MAX_REQS, ''),
-            (FCGI_MPXS_CONNS, ''),
-        ))
-        handler = TestConnectionHandler()
-
-        handler.send_record(record_type, content, FCGI_NULL_REQUEST_ID)
-
-        assert len(handler.records_sent) == 1
-        record = handler.records_sent[0]
-        assert record.type == record_type
-        assert record.content == content
-        assert record.request_id == FCGI_NULL_REQUEST_ID
-
-    def test_begin_request(self):
-        handler = TestConnectionHandler()
-        request = handler.begin_request()
-
-        assert len(handler.requests) == 1
-        assert request.id in handler.requests
-        assert not handler.keep_open
-
-    def test_begin_filter_request(self):
-        from ...const import FCGI_FILTER
-
-        handler = TestConnectionHandler(role=FCGI_FILTER)
-        request = handler.begin_request()
-
-        assert isinstance(request.data, InputStream)
-
-    def test_begin_request_keep_open(self):
-        from ...const import FCGI_ABORT_REQUEST, FCGI_KEEP_CONN
-
-        handler = TestConnectionHandler()
-        request = handler.begin_request(flags=FCGI_KEEP_CONN)
-        handler.handle_abort_request_record(
-            Record(FCGI_ABORT_REQUEST, '', request.id), request)
-
-        assert not handler.requests
-        assert handler.conn._sock is not None, (
-            'Connection was closed despite FCGI_KEEP_CONN flag')
-
-    def test_begin_request_unknown_role(self):
-        from ...const import (
-            FCGI_RESPONDER,
-            FCGI_AUTHORIZER,
-            FCGI_NULL_REQUEST_ID,
-            FCGI_END_REQUEST,
-            FCGI_UNKNOWN_ROLE,
+    def test_unknown_request(self):
+        records = (
+            (FCGI_STDIN, '', next_req_id()),
+            (FCGI_ABORT_REQUEST, '', next_req_id()),
+            (FCGI_PARAMS, pack_env(), next_req_id()),
+            (FCGI_DATA, 'data', next_req_id()),
         )
 
-        handler = TestConnectionHandler(role=FCGI_RESPONDER)
-        request = handler.begin_request(role=FCGI_AUTHORIZER)
+        for rec in records:
+            handler = run_handler((rec,))
+            conn = handler.conn
 
-        assert request is None
-        assert len(handler.records_sent) == 1
-        record = handler.records_sent[0]
-        assert record.type == FCGI_END_REQUEST
-        assert record.request_id != FCGI_NULL_REQUEST_ID
-        app_status, proto_status = unpack_end_request(record.content)
-        assert proto_status == FCGI_UNKNOWN_ROLE
+            assert conn.close.called
+            assert not read_records(conn)
+            assert not handler.requests
+            assert not handler.request_handler.called
 
-    def test_params(self):
-        import os
-        from ...const import FCGI_PARAMS
+    def test_unknown_record_type(self):
+        rec_type = 123
+        records = (
+            (rec_type, ),
+        )
 
-        env = os.environ.copy()
-        handler = TestConnectionHandler()
-        request = handler.begin_request()
-        record = Record(FCGI_PARAMS, pack_pairs(env), request.id)
+        handler = run_handler(records)
 
-        handler.handle_params_record(record, request)
-        record = Record(FCGI_PARAMS, '', request.id)
-        handler.handle_params_record(record, request)
-
-        assert request.environ == env
-
-    def test_abort_request(self):
-        from ...const import FCGI_ABORT_REQUEST, FCGI_END_REQUEST
-
-        handler = TestConnectionHandler()
-        request = handler.begin_request()
-        record = Record(FCGI_ABORT_REQUEST, '', request.id)
-
-        handler.handle_abort_request_record(record, request)
-
-        assert not handler.requests
-        assert len(handler.records_sent) == 1
-        record = handler.records_sent[0]
-        assert record.type == FCGI_END_REQUEST
-        assert record.request_id == request.id
-
-    def test_abort_request_running(self):
-        from gevent import sleep, event
-        from ...const import (
-            FCGI_PARAMS, FCGI_STDIN, FCGI_ABORT_REQUEST, FCGI_END_REQUEST)
-
-        lock = event.Event()
-
-        def handle_request(request):
-            lock.set()
-            sleep(3)
-
-        handler = TestConnectionHandler(role=FCGI_RESPONDER,
-                                        request_handler=handle_request)
-        request = handler.begin_request()
-        # next records should spawn request handler
-        handler.handle_params_record(
-            Record(FCGI_PARAMS, '', request.id), request)
-        handler.handle_stdin_record(
-            Record(FCGI_STDIN, '', request.id), request)
-        # let it actually start
-        lock.wait(3)
-
-        record = Record(FCGI_ABORT_REQUEST, '', request.id)
-        handler.handle_abort_request_record(record, request)
-
-        assert request.greenlet.dead
-        assert len(handler.records_sent) == 1
-        record = handler.records_sent[0]
-        assert record.type == FCGI_END_REQUEST
-        assert record.request_id == request.id
-        assert not handler.requests
+        rec = find_rec(handler, FCGI_UNKNOWN_TYPE)
+        assert rec and unpack_unknown_type(rec.content)
 
     def test_get_values(self):
-        from ...const import (
-            FCGI_MAX_CONNS, FCGI_MAX_REQS, FCGI_MPXS_CONNS, FCGI_GET_VALUES,
-            FCGI_GET_VALUES_RESULT)
+        req_id = next_req_id
+        records = (
+            (FCGI_GET_VALUES, pack_pairs(
+                (name, '') for name in (
+                    FCGI_MAX_CONNS,
+                    FCGI_MAX_REQS,
+                    FCGI_MPXS_CONNS,
+                )
+            )),
+        )
 
-        server_caps = {
-            FCGI_MAX_CONNS: 1,
-            FCGI_MAX_REQS: 1,
-            FCGI_MPXS_CONNS: 0,
+        handler = run_handler(records)
+
+        assert not handler.requests
+        assert not handler.request_handler.called
+        assert handler.conn.close.called
+
+        rec = find_rec(handler, FCGI_GET_VALUES_RESULT)
+        assert rec
+        assert unpack_pairs(rec.content)
+
+    def test_request(self):
+        req_id = next_req_id()
+        role = FCGI_RESPONDER
+        flags = 0
+        records = (
+            (FCGI_BEGIN_REQUEST, pack_begin_request(role, flags), req_id),
+            (FCGI_PARAMS, pack_env(), req_id),
+            (FCGI_PARAMS, '', req_id),
+        )
+
+        handler = run_handler(records, role=role)
+
+        assert not handler.requests
+        assert handler.request_handler.call_count == 1
+        assert handler.conn.close.called
+
+        rec = find_rec(handler, FCGI_END_REQUEST, req_id)
+        assert rec and unpack_end_request(rec.content)
+
+        for stream in FCGI_STDOUT, FCGI_STDERR:
+            assert '' == read_stream(handler, stream, req_id)
+
+    def test_abort_request(self):
+        req_id = next_req_id()
+        role = FCGI_RESPONDER
+        flags = 0
+        records = (
+            (FCGI_BEGIN_REQUEST, pack_begin_request(role, flags), req_id),
+            (FCGI_PARAMS, pack_env(), req_id),
+            (FCGI_PARAMS, '', req_id),
+            # request_handler gets spawned after PARAMS is "closed"
+            # lets give it a chance to run
+            0.1,
+            # then abort it
+            (FCGI_ABORT_REQUEST, '', req_id),
+        )
+
+        # use request_handler that waits on STDIN so we can abort
+        # it while it's running
+        handler = run_handler(records, role=role,
+                              request_handler=copy_stdin_to_stdout)
+
+        rec = find_rec(handler, FCGI_END_REQUEST, req_id)
+        assert rec and unpack_end_request(rec.content)
+
+        for stream in FCGI_STDOUT, FCGI_STDERR:
+            assert '' == read_stream(handler, stream, req_id)
+
+    def test_request_multiplexing(self):
+        req_id = next_req_id()
+        req_id_2 = next_req_id()
+        req_id_3 = next_req_id()
+        role = FCGI_RESPONDER
+        flags = 0
+        records = (
+            (FCGI_BEGIN_REQUEST, pack_begin_request(role, flags), req_id),
+            (FCGI_PARAMS, pack_env(), req_id),
+            (FCGI_BEGIN_REQUEST, pack_begin_request(role, flags), req_id_2),
+            (FCGI_BEGIN_REQUEST, pack_begin_request(role, flags), req_id_3),
+            (FCGI_PARAMS, pack_env(), req_id_3),
+            (FCGI_PARAMS, pack_env(), req_id_2),
+            (FCGI_PARAMS, '', req_id_2),
+            (FCGI_PARAMS, '', req_id),
+            (FCGI_ABORT_REQUEST, '', req_id_3),
+        )
+
+        handler = run_handler(records, role=role)
+
+        assert not handler.requests
+        assert handler.request_handler.call_count == 2
+        assert handler.conn.close.called
+
+        for r_id in req_id, req_id_2, req_id_3:
+            rec = find_rec(handler, FCGI_END_REQUEST, r_id)
+            assert rec and unpack_end_request(rec.content)
+
+            for stream in FCGI_STDOUT, FCGI_STDERR:
+                assert '' == read_stream(handler, stream, r_id)
+
+
+# Helper functions
+
+def copy_stdin_to_stdout(request):
+    """
+    Simple request handler
+    """
+    request.stdout.write(request.stdin.read())
+
+
+def make_record(record_type, content='', request_id=FCGI_NULL_REQUEST_ID):
+    return Record(record_type, content, request_id)
+
+
+def iter_records(records, done=None):
+    for rec in records:
+        if isinstance(rec, tuple):
+            rec = make_record(*rec)
+        elif isinstance(rec, (int, float)):
+            sleep(rec)
+            continue
+        elif isinstance(rec, event.Event):
+            rec.set()
+            continue
+        yield rec
+        sleep(0)
+
+
+def run_handler(records, role=FCGI_RESPONDER, request_handler=None, capabilities=None, timeout=None):
+    conn = mock.MagicMock()
+    conn.__iter__.return_value = iter_records(records)
+
+    if capabilities is None:
+        capabilities = {
+            FCGI_MAX_CONNS: '1',
+            FCGI_MAX_REQS: '1',
+            FCGI_MPXS_CONNS: '0',
         }
-        handler = TestConnectionHandler(capabilities=server_caps)
-        request_caps = dict.fromkeys(server_caps, '')
-        record = Record(FCGI_GET_VALUES, pack_pairs(request_caps), 0)
 
-        handler.handle_get_values_record(record)
+    if request_handler is None:
+        request_handler = mock.MagicMock()
 
-        response_caps = dict(unpack_pairs(''.join(
-            record.content for record in handler.records_sent
-            if record.type == FCGI_GET_VALUES_RESULT)))
+    handler = ConnectionHandler(conn, role, capabilities, request_handler)
+    g = spawn(handler.run)
+    g.join(timeout)
 
-        for cap in server_caps:
-            assert cap in response_caps, repr(response_caps)
-            assert isinstance(response_caps[cap], str)
+    return handler
+
+
+def read_records(conn, req_id=None):
+    return [args[0] for args, kw in conn.write_record.call_args_list
+            if req_id is None or args[0].request_id == req_id]
+
+
+def find_rec(handler, rec_type, req_id=FCGI_NULL_REQUEST_ID):
+    records = read_records(handler.conn, req_id)
+    for rec in records:
+        if rec.type == rec_type:
+            return rec
+    assert False, 'No %s record found in %r' % (rec_type, records)
+
+
+def read_stream(handler, rec_type, req_id):
+        closed = False
+        content = []
+
+        for rec in read_records(handler.conn, req_id):
+            if rec.type == rec_type:
+                assert not closed, 'Stream is already closed'
+                if rec.content:
+                    content.append(rec.content)
+                else:
+                    closed = True
+
+        assert closed, 'Stream was not closed'
+
+        return ''.join(content)
+
+
+next_req_id = count(1).next
+
+
+if __name__ == '__main__':
+    unittest.main()

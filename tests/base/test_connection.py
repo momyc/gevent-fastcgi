@@ -3,7 +3,7 @@ from __future__ import absolute_import, with_statement
 import unittest
 from random import randint
 
-from ...const import (
+from gevent_fastcgi.const import (
     FCGI_STDIN,
     FCGI_STDOUT,
     FCGI_STDERR,
@@ -12,7 +12,7 @@ from ...const import (
     FCGI_RECORD_HEADER_LEN,
     FCGI_MAX_CONTENT_LEN,
 )
-from ...base import Record, Connection, PartialRead
+from gevent_fastcgi.base import Record, Connection, PartialRead
 from ..utils import binary_data, MockSocket
 
 

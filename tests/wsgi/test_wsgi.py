@@ -3,8 +3,11 @@ from __future__ import absolute_import
 import sys
 import unittest
 
-from ...wsgi import WSGIRequestHandler, WSGIRefRequestHandler
-from ..utils import text_data
+from gevent_fastcgi.const import FCGI_STDOUT, FCGI_RESPONDER
+from gevent_fastcgi.base import Connection
+from gevent_fastcgi.server import Request
+from gevent_fastcgi.wsgi import WSGIRequestHandler, WSGIRefRequestHandler
+from ..utils import text_data, MockSocket, text_data
 
 
 class WSGIRequestHandlerBase(object):
@@ -125,11 +128,6 @@ class WSGIRequestHandlerBase(object):
         assert body.startswith(greetings)
 
     def _handle_request(self, app):
-        from ...const import FCGI_STDOUT, FCGI_RESPONDER
-        from ...base import Connection
-        from ...server import Request
-        from ..utils import text_data, MockSocket
-
         sock = MockSocket()
         conn = Connection(sock)
         request = Request(conn, 1, FCGI_RESPONDER)

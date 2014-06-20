@@ -14,7 +14,7 @@ class Filter(logging.Filter):
 logging.getLogger().addFilter(Filter())
 
 
-from ...const import (
+from gevent_fastcgi.const import (
     FCGI_ABORT_REQUEST,
     FCGI_AUTHORIZER,
     FCGI_BEGIN_REQUEST,
@@ -37,8 +37,8 @@ from ...const import (
     FCGI_UNKNOWN_TYPE,
     FCGI_NULL_REQUEST_ID,
 )
-from ...base import Record
-from ...utils import (
+from gevent_fastcgi.base import Record
+from gevent_fastcgi.utils import (
     pack_pairs, unpack_pairs, pack_begin_request, unpack_end_request)
 from ..utils import (
     WSGIApplication as app,

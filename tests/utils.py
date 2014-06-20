@@ -9,16 +9,16 @@ import logging
 
 from gevent import socket, sleep
 
-from ..const import (
+from gevent_fastcgi.const import (
     FCGI_RESPONDER,
     FCGI_MAX_CONNS,
     FCGI_MAX_REQS,
     FCGI_MPXS_CONNS,
     FCGI_MAX_CONTENT_LEN,
 )
-from ..base import Connection, InputStream
-from ..utils import pack_pairs
-from ..wsgi import WSGIServer
+from gevent_fastcgi.base import Connection, InputStream
+from gevent_fastcgi.utils import pack_pairs
+from gevent_fastcgi.wsgi import WSGIServer
 
 
 __all__ = (

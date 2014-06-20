@@ -2,14 +2,15 @@ from __future__ import absolute_import, with_statement
 
 import unittest
 
+from gevent import Timeout
+
+from gevent_fastcgi.base import Connection, InputStream
 from ..utils import binary_data, text_data, MockSocket
 
 
 class InputStreamTests(unittest.TestCase):
 
     def setUp(self):
-        from ...base import Connection, InputStream
-
         self.sock = MockSocket()
         self.conn = Connection(self.sock)
         self.stream = InputStream(self.conn)
@@ -43,8 +44,6 @@ class InputStreamTests(unittest.TestCase):
             assert line_in == line_out
 
     def test_blocks_until_eof(self):
-        from gevent import Timeout
-
         stream = self.stream
         data = binary_data()
         stream.feed(data)

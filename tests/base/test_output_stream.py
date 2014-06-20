@@ -3,13 +3,15 @@ from __future__ import absolute_import, with_statement
 import unittest
 from random import randint
 
-from ...const import (
+from gevent import sleep, Timeout
+
+from gevent_fastcgi.const import (
     FCGI_STDOUT,
     FCGI_STDERR,
     FCGI_MAX_CONTENT_LEN,
 )
 
-from ...base import Connection, StdoutStream, StderrStream
+from gevent_fastcgi.base import Connection, StdoutStream, StderrStream
 from ..utils import binary_data, text_data, MockSocket
 
 
@@ -122,8 +124,6 @@ class StdoutStreamTests(StreamTestsBase, unittest.TestCase):
     stream_class = StdoutStream
 
     def test_writelines(self):
-        from gevent import sleep, Timeout
-
         stream = self.stream()
 
         def app_iter(delay):
