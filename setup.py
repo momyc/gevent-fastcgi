@@ -43,6 +43,6 @@ setup(
             'wsgiref = gevent_fastcgi.adapters.paste_deploy:wsgiref_server_runner',
         ],
     },
-    test_suite="gevent_fastcgi.test",
+    test_suite="tests",
     ext_modules=ext_modules
 )
