@@ -1,10 +1,7 @@
 import os
 import sys
 from setuptools import setup, Extension, find_packages
-import logging.config
 
-
-logging.config.fileConfig('logging.ini')
 
 ext_modules = []
 # C speedups are no good for PyPy
