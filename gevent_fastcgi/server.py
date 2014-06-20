@@ -172,6 +172,9 @@ class ConnectionHandler(object):
             self.request_handler(request)
             request.stdout.close()
             request.stderr.close()
+        except:
+            logger.exception('Request handler raised exception')
+            raise
         finally:
             self.end_request(request)
 
