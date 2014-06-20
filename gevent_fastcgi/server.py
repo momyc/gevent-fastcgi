@@ -228,7 +228,7 @@ class ConnectionHandler(object):
                 0,  FCGI_UNKNOWN_ROLE), record.request_id)
             logger.error(
                 'Request role {0} does not match server role {1}'.format(
-                role, self.role))
+                    role, self.role))
             self._report_finished_job()
         else:
             # Should we check this for every request instead?
