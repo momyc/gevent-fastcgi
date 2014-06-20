@@ -62,8 +62,8 @@ class PartialRead(Exception):
     """
     def __init__(self, requested_size, partial_data):
         super(PartialRead, self).__init__(
-            'Expected {0} but received {1} bytes only'.format(requested_size,
-            len(partial_data)))
+            'Expected {0} but received {1} bytes only'.format(
+                requested_size, len(partial_data)))
         self.requested_size = requested_size
         self.partial_data = partial_data
 
@@ -72,45 +72,45 @@ class BufferedReader(object):
     """ Allows to receive data in large chunks
     """
     def __init__(self, read_callable, buffer_size):
-        self._reader = _reader_generator(read_callable, buffer_size)
+        self._reader = self._reader_generator(read_callable, buffer_size)
         self._reader.next()  # advance generator to first yield statement
-        self.read_bytes = self._reader.send
 
+    def read_bytes(self, max_len):
+        return self._reader.send(max_len)
 
-def _reader_generator(read, buf_size):
-    buf = ''
-    blen = 0
-    chunks = []
-    size = (yield)
+    @staticmethod
+    def _reader_generator(read, buf_size):
+        buf = ''
+        blen = 0
+        chunks = []
+        size = (yield)
 
-    while True:
-        if blen >= size:
-            data, buf = buf[:size], buf[size:]
-            blen -= size
-        else:
-            while blen < size:
-                chunks.append(buf)
-                buf = read((size - blen + buf_size - 1) // buf_size * buf_size)
-                # buf = read(size - blen)
-                if not buf:
-                    raise PartialRead(size, ''.join(chunks))
-                blen += len(buf)
-
-            blen -= size
-
-            if blen:
-                chunks.append(buf[:-blen])
-                buf = buf[-blen:]
+        while True:
+            if blen >= size:
+                data, buf = buf[:size], buf[size:]
+                blen -= size
             else:
-                chunks.append(buf)
-                buf = ''
+                while blen < size:
+                    chunks.append(buf)
+                    buf = read(
+                        (size - blen + buf_size - 1) // buf_size * buf_size)
+                    if not buf:
+                        raise PartialRead(size, ''.join(chunks))
+                    blen += len(buf)
 
-            data = ''.join(chunks)
-            chunks = []
+                blen -= size
 
-        size = (yield data)
+                if blen:
+                    chunks.append(buf[:-blen])
+                    buf = buf[-blen:]
+                else:
+                    chunks.append(buf)
+                    buf = ''
 
+                data = ''.join(chunks)
+                chunks = []
 
+            size = (yield data)
 
 
 class Record(namedtuple('Record', ('type', 'content', 'request_id'))):
@@ -131,6 +131,7 @@ class Connection(object):
         self.buffered_reader = BufferedReader(sock.recv, buffer_size)
 
     def write_record(self, record):
+        send = self._sock.send
         content_len = len(record.content)
         if content_len > FCGI_MAX_CONTENT_LEN:
             raise ValueError('Record content length exceeds {0}'.format(
@@ -139,13 +140,13 @@ class Connection(object):
         header = pack_header(
             FCGI_VERSION, record.type, record.request_id, content_len, 0)
 
-        buf = buffer(header + record.content)
-
-        send = self._sock.send
-        size = FCGI_RECORD_HEADER_LEN + content_len
-        sent = 0
-        while sent < size:
-            sent += send(buf[sent:], timeout=None)
+        for buf, length in (
+            (header, FCGI_RECORD_HEADER_LEN),
+            (record.content, content_len),
+        ):
+            sent = 0
+            while sent < length:
+                sent += send(buffer(buf, sent))
 
     def read_record(self):
         read_bytes = self.buffered_reader.read_bytes
@@ -171,9 +172,7 @@ class Connection(object):
         if padding:  # pragma: no cover
             read_bytes(padding)
 
-        record = Record(record_type, content, request_id)
-
-        return record
+        return Record(record_type, content, request_id)
 
     def __iter__(self):
         return iter(self.read_record, None)
