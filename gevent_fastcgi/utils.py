@@ -55,8 +55,9 @@ def pack_pairs(pairs):
 
 try:
     from .speedups import pack_pair, unpack_pairs
+    logger.debug('Using speedups module')
 except ImportError:
-    logger.exception('Failed to load speedups module')
+    logger.debug('Failed to load speedups module')
 
     length_struct = struct.Struct('!L')
 
@@ -88,13 +89,14 @@ except ImportError:
             try:
                 name_len, pos = unpack_len(data, pos)
                 value_len, pos = unpack_len(data, pos)
-                if end - pos < name_len + value_len:
-                    raise ValueError('Buffer is {0} bytes short'.format(
-                        name_len + value_len - (end - pos)))
-                name = data[pos:pos + name_len]
-                pos += name_len
-                value = data[pos:pos + value_len]
-                pos += value_len
-                yield name, value
             except (IndexError, struct.error):
                 raise ValueError('Buffer is too short')
+
+            if end - pos < name_len + value_len:
+                raise ValueError('Buffer is {0} bytes short'.format(
+                    name_len + value_len - (end - pos)))
+            name = data[pos:pos + name_len]
+            pos += name_len
+            value = data[pos:pos + value_len]
+            pos += value_len
+            yield name, value
