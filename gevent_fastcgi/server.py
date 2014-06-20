@@ -196,16 +196,14 @@ class ConnectionHandler(object):
                 logger.error('{0}: Unknown record type'.format(record))
                 self.send_record(FCGI_UNKNOWN_TYPE,
                                  pack_unknown_type(record.type))
-                self._report_finished_job()
-                continue
+                break
 
             if record.type in EXISTING_REQUEST_RECORD_TYPES:
                 request = requests.get(record.request_id)
                 if request is None:
                     logger.error(
                         'Record {0} for non-existent request'.format(record))
-                    self._report_finished_job()
-                    continue
+                    break
                 handler(self, record, request)
             else:
                 handler(self, record)
