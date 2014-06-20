@@ -8,8 +8,9 @@ from gevent_fastcgi.utils import pack_pairs, unpack_pairs
 
 
 SHORT_STR = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-LONG_STR = SHORT_STR * 32
-STRINGS = ('', SHORT_STR, LONG_STR)
+MEDIUM_STR = SHORT_STR * 32
+LONG_STR = MEDIUM_STR * 32
+STRINGS = ('', SHORT_STR, MEDIUM_STR, LONG_STR)
 
 
 class UtilsTests(unittest.TestCase):
@@ -18,6 +19,15 @@ class UtilsTests(unittest.TestCase):
         pairs = tuple(product(STRINGS, STRINGS))
 
         assert pairs == tuple(unpack_pairs(pack_pairs(pairs)))
+
+
+    def test_too_long(self):
+        TOO_LONG_STR = LONG_STR * (0x7fffffff / len(LONG_STR) + 1)
+        pairs = product(STRINGS, (TOO_LONG_STR,))
+
+        for pair in pairs:
+            with self.assertRaises(ValueError):
+                pack_pairs((pair,))
 
 
 class NoSpeedupsUtilsTests(UtilsTests):

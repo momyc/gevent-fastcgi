@@ -20,13 +20,14 @@
  *    THE SOFTWARE.
  */
 
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <arpa/inet.h>
 
 
 #define ENSURE_LEN(req) if ((end - buf) < (req)) { \
 	Py_XDECREF(result); \
-	return PyErr_Format(PyExc_ValueError, "Buffer is %d byte(s) short", (req) - (end - buf)); \
+	return PyErr_Format(PyExc_ValueError, "Buffer is %ld byte(s) short", (req) - (end - buf)); \
 }
 
 #define PARSE_LEN(len) ENSURE_LEN(1); \
@@ -40,7 +41,7 @@
 static PyObject *
 py_unpack_pairs(PyObject *self, PyObject *args) {
 	unsigned char *buf, *name, *value, *end;
-	unsigned int blen, nlen, vlen;
+	Py_ssize_t blen, nlen, vlen;
 	PyObject *result, *tuple;
 
 	if (!PyArg_ParseTuple(args, "s#:unpack_pairs", &buf, &blen)) {
@@ -86,11 +87,22 @@ static PyObject *
 py_pack_pair(PyObject *self, PyObject *args) {
 	PyObject *result, *name, *value;
 	unsigned char *buf, *ptr;
-	int name_len, value_len, buf_len;
+	Py_ssize_t name_len, value_len, buf_len;
 
 	if (!PyArg_ParseTuple(args, "s#s#:pack_pair", &name, &name_len, &value, &value_len)) {
 		return NULL;
 	}
+
+	if (name_len > 0x7fffffff) {
+		PyErr_SetString (PyExc_ValueError,"Pair name too long");
+		return NULL;
+	}
+
+	if (value_len > 0x7fffffff) {
+		PyErr_SetString (PyExc_ValueError,"Pair value too long");
+		return NULL;
+	}
+
 
 	buf_len = name_len + value_len + (name_len > 127 ? 4 : 1) + (value_len > 127 ? 4 : 1);
 	buf = ptr = (unsigned char*) PyMem_Malloc(buf_len);
@@ -144,13 +156,13 @@ static PyObject *
 py_unpack_header(PyObject *self, PyObject *args) {
 	PyObject *result;
 	record_header_t *header;
-	int len;
+	Py_ssize_t len;
 	
 	if (!PyArg_ParseTuple(args, "s#:unpack_header", (char *)&header, &len)) return NULL;
 
 	if (len < sizeof(record_header_t))
 		return PyErr_Format(PyExc_ValueError,
-				"Data must be at least %d bytes long (%d passed)",
+				"Data must be at least %ld bytes long (%ld passed)",
 				sizeof(record_header_t), len);
 
 	result = Py_BuildValue("(bbhhb)",
