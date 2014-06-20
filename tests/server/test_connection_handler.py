@@ -199,7 +199,8 @@ def iter_records(records, done=None):
         sleep(0)
 
 
-def run_handler(records, role=FCGI_RESPONDER, request_handler=None, capabilities=None, timeout=None):
+def run_handler(records, role=FCGI_RESPONDER, request_handler=None,
+                capabilities=None, timeout=None):
     conn = mock.MagicMock()
     conn.__iter__.return_value = iter_records(records)
 

@@ -20,7 +20,6 @@ class UtilsTests(unittest.TestCase):
 
         assert pairs == tuple(unpack_pairs(pack_pairs(pairs)))
 
-
     def test_too_long(self):
         TOO_LONG_STR = LONG_STR * (0x7fffffff / len(LONG_STR) + 1)
         pairs = product(STRINGS, (TOO_LONG_STR,))
