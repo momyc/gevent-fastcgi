@@ -136,8 +136,6 @@ class ConnectionHandler(object):
             return type(name, bases, attrs)
 
     def __init__(self, conn, role, capabilities, request_handler):
-        conn._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
-        conn._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
         self.conn = conn
         self.role = role
         self.capabilities = capabilities
@@ -352,6 +350,10 @@ class FastCGIServer(StreamServer):
     def handle_connection(self, sock, addr):
         if sock.family in (socket.AF_INET, socket.AF_INET6):
             sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
+                            self.buffer_size)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF,
+                            self.buffer_size)
         conn = ServerConnection(sock, self.buffer_size)
         handler = ConnectionHandler(
             conn, self.role, self.capabilities, self.request_handler)
