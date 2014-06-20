@@ -117,7 +117,7 @@ class Record(namedtuple('Record', ('type', 'content', 'request_id'))):
 
     def __str__(self):
         return '<Record {0}, req id {1}, {2} bytes>'.format(
-            FCGI_RECORD_TYPES[self.type],
+            FCGI_RECORD_TYPES.get(self.type, self.type),
             self.request_id,
             len(self.content))
 
