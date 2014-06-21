@@ -1,2 +1,1 @@
-exclude logging.ini
 recursive-exclude tests *
