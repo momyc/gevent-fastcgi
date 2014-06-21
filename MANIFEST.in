@@ -1,3 +1,2 @@
-exclude gevent_fastcgi/client.py
 exclude logging.ini
 recursive-exclude tests *
