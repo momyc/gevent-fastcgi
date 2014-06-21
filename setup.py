@@ -41,5 +41,6 @@ setup(
         ],
     },
     test_suite="tests",
+    tests_require=['mock'],
     ext_modules=ext_modules
 )
