@@ -213,6 +213,10 @@ class InputStream(object):
         self._eof_received.wait()
         return self._file.read(size)
 
+    def readline(self, size=-1):
+        self._eof_received.wait()
+        return self._file.readline(size)
+
     def readlines(self, sizehint=0):
         self._eof_received.wait()
         return self._file.readlines(sizehint)
