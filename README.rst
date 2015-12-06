@@ -15,6 +15,17 @@ Can fork multiple processes to better utilize multi-core CPUs.
 Includes adapters for `Django <http://djangoproject.com/>`_ and frameworks that use 
 `PasteDeploy <http://pythonpaste.org/deploy>`_ like `Pylons / Pyramid <http://pylonsproject.org/>`_ and `TurboGears <http://turbogears.org/>`_ to simplify depolyment.
 
+Contributors
+------------
+
+This project could not be where it is now without help of the following great people:
+
+        * `David Galeano <https://github.com/davidgaleano>`_
+        * `Lucas Clemente Vella <https://github.com/lvella>`_
+        * `Peter D. Gray <https://github.com/peter-conalgo>`_
+
+Thank you guys for all your help!
+
 Installation
 ------------
 
@@ -207,13 +218,3 @@ Following is sample of custom request handler implementation:
             handler = CGIRequestHandler('/var/www/cgi-bin')
             server = FastCGIServer(address, handler)
             server.serve_forever()
-
-Contributors
-------------
-
-This project could not be where it is now without help of the following great people:
-
-        * `David Galeano <https://github.com/davidgaleano>`_
-        * `Lucas Clemente Vella <https://github.com/lvella>`_
-
-Thank you guys for all your help!
