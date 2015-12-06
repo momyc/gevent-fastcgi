@@ -11,7 +11,7 @@ if '__pypy__' not in sys.builtin_module_names:
 
 setup(
     name='gevent-fastcgi',
-    version='1.0.2',
+    version='1.0.2.1',
     description='''FastCGI/WSGI client and server implemented using gevent
     library''',
     long_description='''
