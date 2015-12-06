@@ -24,7 +24,7 @@ setup(
     ''',
     keywords='fastcgi gevent wsgi',
     author='Alexander Kulakov',
-    author_email='homo.programmerus@gmail.com',
+    author_email='a.kulakov@mail.ru',
     url='http://github.com/momyc/gevent-fastcgi',
     packages=find_packages(exclude=('gevent_fastcgi.tests.*',)),
     zip_safe=True,
