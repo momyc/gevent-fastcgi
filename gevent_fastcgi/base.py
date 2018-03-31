@@ -20,11 +20,13 @@
 
 from __future__ import with_statement
 
+import six
+import sys
 import logging
 from collections import namedtuple
 from tempfile import SpooledTemporaryFile
 
-from zope.interface import implements
+from zope.interface import implementer
 from gevent import socket
 from gevent.event import Event
 
@@ -41,6 +43,9 @@ from .const import (
     FCGI_MAX_CONTENT_LEN,
 )
 from .utils import pack_header, unpack_header
+
+if sys.version_info > (3,):
+    buffer = memoryview
 
 
 __all__ = (
@@ -73,14 +78,14 @@ class BufferedReader(object):
     """
     def __init__(self, read_callable, buffer_size):
         self._reader = self._reader_generator(read_callable, buffer_size)
-        self._reader.next()  # advance generator to first yield statement
+        next(self._reader)  # advance generator to first yield statement
 
     def read_bytes(self, max_len):
         return self._reader.send(max_len)
 
     @staticmethod
     def _reader_generator(read, buf_size):
-        buf = ''
+        buf = b''
         blen = 0
         chunks = []
         size = (yield)
@@ -95,7 +100,7 @@ class BufferedReader(object):
                     buf = read(
                         (size - blen + buf_size - 1) // buf_size * buf_size)
                     if not buf:
-                        raise PartialRead(size, ''.join(chunks))
+                        raise PartialRead(size, b''.join(chunks))
                     blen += len(buf)
 
                 blen -= size
@@ -105,9 +110,9 @@ class BufferedReader(object):
                     buf = buf[-blen:]
                 else:
                     chunks.append(buf)
-                    buf = ''
+                    buf = b''
 
-                data = ''.join(chunks)
+                data = b''.join(chunks)
                 chunks = []
 
             size = (yield data)
@@ -122,10 +127,8 @@ class Record(namedtuple('Record', ('type', 'content', 'request_id'))):
             len(self.content))
 
 
+@implementer(IConnection)
 class Connection(object):
-
-    implements(IConnection)
-
     def __init__(self, sock, buffer_size=4096):
         self._sock = sock
         self.buffered_reader = BufferedReader(sock.recv, buffer_size)
@@ -144,16 +147,18 @@ class Connection(object):
             (header, FCGI_RECORD_HEADER_LEN),
             (record.content, content_len),
         ):
+            if isinstance(buf, six.text_type):
+                buf = buf.encode("ISO-8859-1")
             sent = 0
             while sent < length:
-                sent += send(buffer(buf, sent))
+                sent += send(buffer(buf[sent:]))
 
     def read_record(self):
         read_bytes = self.buffered_reader.read_bytes
 
         try:
             header = read_bytes(FCGI_RECORD_HEADER_LEN)
-        except PartialRead, x:
+        except PartialRead as x:
             if x.partial_data:
                 logger.exception('Partial header received: {0}'.format(x))
                 raise

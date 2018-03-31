@@ -22,6 +22,7 @@ from __future__ import absolute_import
 
 import struct
 import logging
+import six
 
 
 __all__ = [
@@ -49,7 +50,7 @@ for name in 'header', 'begin_request', 'end_request', 'unknown_type':
 
 def pack_pairs(pairs):
     if isinstance(pairs, dict):
-        pairs = pairs.iteritems()
+        pairs = six.iteritems(pairs)
     return ''.join(pack_pair(name, value) for name, value in pairs)
 
 

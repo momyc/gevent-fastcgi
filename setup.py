@@ -6,8 +6,12 @@ from setuptools import setup, Extension, find_packages
 ext_modules = []
 # C speedups are no good for PyPy
 if '__pypy__' not in sys.builtin_module_names:
-    ext_modules.append(
-        Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c']))
+    if os.name == "nt":
+        ext_modules.append(
+            Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c'], libraries=["Ws2_32"]))
+    else:
+        ext_modules.append(
+            Extension('gevent_fastcgi.speedups', ['gevent_fastcgi/speedups.c']))
 
 setup(
     name='gevent-fastcgi',
@@ -30,8 +34,9 @@ setup(
     zip_safe=True,
     license='MIT',
     install_requires=[
-        "zope.interface",
+        "zope.interface>=3.8.0",
         "gevent>=0.13.6",
+        "six",
     ],
     entry_points={
         'paste.server_runner': [

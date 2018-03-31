@@ -24,13 +24,18 @@ from gevent.monkey import patch_os
 patch_os()
 
 import os
+import six
 import sys
 import errno
 import logging
-from signal import SIGHUP, SIGKILL, SIGQUIT, SIGINT, SIGTERM
-import atexit
 
-from zope.interface import implements
+import atexit
+if os.name == "nt":
+    from signal import SIGTERM
+else:
+    from signal import SIGHUP, SIGKILL, SIGQUIT, SIGINT, SIGTERM
+
+from zope.interface import implementer
 
 from gevent import sleep, spawn, socket, signal, version_info
 from gevent.server import StreamServer
@@ -81,10 +86,8 @@ __all__ = ('Request', 'ServerConnection', 'FastCGIServer')
 logger = logging.getLogger(__name__)
 
 
+@implementer(IRequest)
 class Request(object):
-
-    implements(IRequest)
-
     def __init__(self, conn, request_id, role):
         self.conn = conn
         self.id = request_id
@@ -121,20 +124,19 @@ def record_handler(record_type):
         return method
     return decorator
 
+class ConnectionHandlerType(type):
+    """
+    Collect record handlers during class construction
+    """
 
-class ConnectionHandler(object):
+    def __new__(cls, name, bases, attrs):
+        attrs['_record_handlers'] = dict(
+            (getattr(method, HANDLE_RECORD_ATTR), method)
+            for name, method in attrs.items()
+            if hasattr(method, HANDLE_RECORD_ATTR))
+        return type(name, bases, attrs)
 
-    class __metaclass__(type):
-        """
-        Collect record handlers during class construction
-        """
-        def __new__(cls, name, bases, attrs):
-            attrs['_record_handlers'] = dict(
-                (getattr(method, HANDLE_RECORD_ATTR), method)
-                for name, method in attrs.items()
-                if hasattr(method, HANDLE_RECORD_ATTR))
-            return type(name, bases, attrs)
-
+class ConnectionHandler(six.with_metaclass(ConnectionHandlerType, object)):
     def __init__(self, conn, role, capabilities, request_handler):
         self.conn = conn
         self.role = role
@@ -296,7 +298,7 @@ class FastCGIServer(StreamServer):
                  num_workers=1, buffer_size=1024, max_conns=1024,
                  socket_mode=None, **kwargs):
         # StreamServer does not create UNIX-sockets
-        if isinstance(listener, basestring):
+        if isinstance(listener, six.string_types):
             self._socket_file = listener
             self._socket_mode = socket_mode
             # StreamServer does not like "backlog" with pre-cooked socket
@@ -335,7 +337,10 @@ class FastCGIServer(StreamServer):
                 self._start_workers()
                 self._supervisor = spawn(self._watch_workers)
                 atexit.register(self._cleanup)
-                for signum in SIGINT, SIGTERM, SIGQUIT:
+                sig_register = [SIGTERM]
+                if os.name != "nt":
+                    sig_register.extend([SIGINT, SIGQUIT])
+                for signum in sig_register:
                     signal(signum, sys.exit, 1)
 
     def start_accepting(self):
@@ -391,7 +396,8 @@ class FastCGIServer(StreamServer):
                         os.dup2(devnull_fd, fd)
                 finally:
                     os.close(devnull_fd)
-                signal(SIGHUP, self.stop)
+                if os.name != "nt":
+                    signal(SIGHUP, self.stop)
                 self.start_accepting()
                 super(FastCGIServer, self).serve_forever()
             finally:
@@ -411,7 +417,7 @@ class FastCGIServer(StreamServer):
                     logger.debug('Waiting for all workers to exit')
                     keep_running = False
                     self._reap_workers(True)
-            except OSError, e:
+            except OSError as e:
                 if e.errno != errno.ECHILD:
                     logger.exception('Failed to wait for any worker to exit')
                 else:
@@ -446,7 +452,7 @@ class FastCGIServer(StreamServer):
                 logger.debug(
                     'Killing worker {0} with signal {1}'.format(pid, sig))
                 os.kill(pid, sig)
-            except OSError, x:
+            except OSError as x:
                 if x.errno == errno.ESRCH:
                     logger.error('Worker with pid {0} not found'.format(pid))
                     if pid in self._workers:
@@ -462,6 +468,8 @@ class FastCGIServer(StreamServer):
 
     def _killing_sequence(self, max_timeout):
         short_delay = max(0.1, max_timeout / 50)
+        if os.name == "nt":
+            return
         for sig in SIGHUP, SIGKILL:
             if not self._workers:
                 raise StopIteration

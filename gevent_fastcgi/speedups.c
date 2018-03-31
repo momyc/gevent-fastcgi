@@ -22,8 +22,15 @@
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#ifdef _WIN32
+#include <Winsock2.h>
+#else
 #include <arpa/inet.h>
+#endif
 
+#if PY_MAJOR_VERSION >= 3
+#define PyString_FromStringAndSize PyBytes_FromStringAndSize
+#endif
 
 #define ENSURE_LEN(req) if ((end - buf) < (req)) { \
 	Py_XDECREF(result); \
@@ -185,7 +192,54 @@ static PyMethodDef _methods[] = {
 	{NULL, NULL}
 };
 
+struct module_state {
+    PyObject *error;
+};
+
+#if PY_MAJOR_VERSION >= 3
+#define GETSTATE(m) ((struct module_state*)PyModule_GetState(m))
+#else
+#define GETSTATE(m) (&_state)
+static struct module_state _state;
+#endif
+
+#if PY_MAJOR_VERSION >= 3
+
+static int _traverse(PyObject *m, visitproc visit, void *arg) {
+    Py_VISIT(GETSTATE(m)->error);
+    return 0;
+}
+
+static int _clear(PyObject *m) {
+    Py_CLEAR(GETSTATE(m)->error);
+    return 0;
+}
+
+static struct PyModuleDef moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "speedups",
+    NULL,
+    sizeof(struct module_state),
+    _methods,
+    NULL,
+    _traverse,
+    _clear,
+    NULL
+};
+
+#define INITERROR return NULL
 PyMODINIT_FUNC
-initspeedups(void) {
+PyInit_speedups(void)
+#else
+#define INITERROR return
+void
+initspeedups(void)
+#endif
+{
+#if PY_MAJOR_VERSION >= 3
+    PyObject *module = PyModule_Create(&moduledef);
+    return module;
+#else
 	Py_InitModule("speedups", _methods);
+#endif
 }
