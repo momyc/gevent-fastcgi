@@ -4,6 +4,8 @@ import os
 import signal
 import unittest
 import logging
+import errno
+import six
 
 
 class Filter(logging.Filter):
@@ -60,7 +62,7 @@ class ServerTests(unittest.TestCase):
                 with make_connection(address) as conn:
                     self._run_get_values(conn)
             # check if socket file was removed
-            if isinstance(address, basestring):
+            if isinstance(address, six.string_types):
                 assert not os.path.exists(address)
 
     def test_role(self):
@@ -241,7 +243,7 @@ class ServerTests(unittest.TestCase):
             sleep(0.1)
             try:
                 os.kill(worker, 0)
-            except OSError, e:
+            except OSError as e:
                 assert e.errno == errno.ESRCH
             sleep(5)
             assert len(server._workers) == server.num_workers
@@ -291,4 +293,4 @@ class ServerTests(unittest.TestCase):
                     else:
                         self.fail('Unexpected record type %s' % record.type)
 
-        return responses.values()
+        return list(responses.values())

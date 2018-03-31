@@ -165,6 +165,10 @@ class Connection(object):
             # Remote side closed connection after sending all records
             logger.debug('Connection closed by peer')
             return None
+        except StopIteration:
+            # Connection closed unexpectedly
+            logger.debug('Connection closed by peer')
+            return None
 
         version, record_type, request_id, content_len, padding = (
             unpack_header(header))
@@ -176,6 +180,9 @@ class Connection(object):
 
         if padding:  # pragma: no cover
             read_bytes(padding)
+
+        if isinstance(content, six.text_type):
+            content = content.encode("ISO-8859-1")
 
         return Record(record_type, content, request_id)
 
@@ -201,6 +208,9 @@ class InputStream(object):
         self._file = SpooledTemporaryFile(max_mem)
         self._eof_received = Event()
 
+    def __del__(self):
+        self._file.close()
+
     def feed(self, data):
         if self._eof_received.is_set():
             raise IOError('Feeding file beyond EOF mark')
@@ -208,6 +218,8 @@ class InputStream(object):
             self._file.seek(0)
             self._eof_received.set()
         else:
+            if isinstance(data, six.text_type):
+                data = data.encode("ISO-8859-1")
             self._file.write(data)
 
     def __iter__(self):
@@ -281,10 +293,12 @@ class OutputStream(object):
                 continue
 
             line_len = len(line)
+            if isinstance(line, six.text_type):
+                line = line.encode("ISO-8859-1")
 
             if line_len >= remainder:
                 buf.append(line[:remainder])
-                record = Record(record_type, ''.join(buf), request_id)
+                record = Record(record_type, b''.join(buf), request_id)
                 write_record(record)
                 buf = [line[remainder:]]
                 remainder = FCGI_MAX_CONTENT_LEN
@@ -293,7 +307,7 @@ class OutputStream(object):
                 remainder -= line_len
 
         if buf:
-            record = Record(record_type, ''.join(buf), request_id)
+            record = Record(record_type, b''.join(buf), request_id)
             write_record(record)
 
     def flush(self):
@@ -303,7 +317,7 @@ class OutputStream(object):
         if not self.closed:
             self.closed = True
             self.conn.write_record(
-                Record(self.record_type, '', self.request_id))
+                Record(self.record_type, b'', self.request_id))
 
 
 class StdoutStream(OutputStream):
