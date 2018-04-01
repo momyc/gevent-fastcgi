@@ -45,6 +45,17 @@ setup(
             'wsgiref = gevent_fastcgi.adapters.paste_deploy:wsgiref_server_runner',
         ],
     },
+    classifiers=(
+        'Development Status :: 5 - Production/Stable',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 2.6',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Topic :: Internet :: WWW/HTTP :: WSGI :: Server',
+    ),
     test_suite="tests",
     tests_require=['mock'],
     ext_modules=ext_modules
