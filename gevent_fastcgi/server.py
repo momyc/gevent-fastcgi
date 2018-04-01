@@ -216,7 +216,7 @@ class ConnectionHandler(six.with_metaclass(ConnectionHandlerType, object)):
 
     @record_handler(FCGI_GET_VALUES)
     def handle_get_values_record(self, record):
-        pairs = ((name, self.capabilities.get(name)) for name, _ in
+        pairs = ((name, self.capabilities.get(name.decode("ISO-8859-1") if isinstance(name, six.binary_type) else name)) for name, _ in
                  unpack_pairs(record.content))
         content = pack_pairs(
             (name, str(value)) for name, value in pairs)
@@ -305,6 +305,8 @@ class FastCGIServer(StreamServer):
             self._backlog = kwargs.pop('backlog', None)
             if self._backlog is None:
                 self._backlog = max_conns
+            if os.name == "nt":
+                raise NotImplemented("Windows do not support unix socket")
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
         super(FastCGIServer, self).__init__(
@@ -380,6 +382,8 @@ class FastCGIServer(StreamServer):
             self._start_worker()
 
     def _start_worker(self):
+        if os.name == "nt":
+            raise NotImplemented("Multiple workers not supported on Windows")
         pid = os.fork()
         if pid:
             # master process

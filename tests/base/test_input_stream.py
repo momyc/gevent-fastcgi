@@ -37,8 +37,9 @@ class InputStreamTests(unittest.TestCase):
     def test_iter(self):
         stream = self.stream
         data_in = [text_data() + '\r\n' for _ in xrange(17)]
+        data_in = [line.encode("ISO-8859-1") for line in data_in]
 
-        map(stream.feed, data_in)
+        list(map(stream.feed, data_in))
         stream.feed('')
 
         for line_in, line_out in zip(data_in, stream):

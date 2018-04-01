@@ -57,8 +57,14 @@ class ServerTests(unittest.TestCase):
     def test_address(self):
         unix_address = 'socket.{0}'.format(os.getpid())
         tcp_address = ('127.0.0.1', 47231)
-        for address in (tcp_address, unix_address):
-            with start_wsgi_server(address, num_workers=2):
+        addresses = (tcp_address, unix_address)
+        if os.name == "nt":
+            addresses = (tcp_address,)  # Windows do not support unix socket
+        for address in addresses:
+            num_workers = 2
+            if os.name == "nt":
+                num_workers = 1  # Windows do not support multiple processes
+            with start_wsgi_server(address, num_workers=num_workers):
                 with make_connection(address) as conn:
                     self._run_get_values(conn)
             # check if socket file was removed
@@ -189,7 +195,7 @@ class ServerTests(unittest.TestCase):
             assert response.request_status == FCGI_REQUEST_COMPLETE
             assert response.stdout.eof_received
             headers, body = response.parse()
-            assert headers.get('Status') == '200 OK', repr(headers)
+            assert headers.get(b'Status') == b'200 OK', repr(headers)
             assert body == data
 
     def test_failed_request(self):
@@ -205,7 +211,7 @@ class ServerTests(unittest.TestCase):
                                             app=app(exception=error))
         assert response.stdout.eof_received
         headers, body = response.parse()
-        assert headers.get('Status', '').startswith('500 ')
+        assert headers.get(b'Status', b'').startswith(b'500 ')
 
         request_id = 11
         request = [
@@ -231,6 +237,7 @@ class ServerTests(unittest.TestCase):
         headers, body = response.parse()
         assert len(body) == 0, repr(body)
 
+    @unittest.skipIf(os.name == "nt", "Test not supported on Windows")
     def test_restart_workers(self):
         from gevent import sleep
 
@@ -265,7 +272,7 @@ class ServerTests(unittest.TestCase):
             self.assertEquals(record.type, FCGI_GET_VALUES_RESULT)
             values = dict(unpack_pairs(record.content))
             for name in names:
-                self.assertIn(name, values)
+                self.assertIn(name.encode("ISO-8859-1") if isinstance(name, six.text_type) else name, values)
             done = True
 
     def _handle_one_request(self, request_id, records, **server_params):
@@ -277,7 +284,7 @@ class ServerTests(unittest.TestCase):
 
         with start_wsgi_server(**server_params) as server:
             with make_connection(server.address) as conn:
-                map(conn.write_record, records)
+                list(map(conn.write_record, records))
                 conn.done_writing()
                 for record in conn:
                     self.assertIn(record.request_id, responses)

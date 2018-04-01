@@ -269,7 +269,7 @@ class Response(object):
         self.app_status = None
 
     def parse(self):
-        headers, body = self.stdout.read().split('\r\n\r\n', 1)
+        headers, body = self.stdout.read().split(b'\r\n\r\n', 1)
         headers = dict(
-            header.split(': ', 1) for header in headers.split('\r\n'))
+            header.split(b': ', 1) for header in headers.split(b'\r\n'))
         return headers, body

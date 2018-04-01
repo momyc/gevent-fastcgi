@@ -49,7 +49,7 @@ class StreamTestsBase(object):
         stream = self.stream()
         data = [binary_data(1024, 1) for _ in range(13)]
 
-        map(stream.write, data)
+        list(map(stream.write, data))
 
         self.sock.flip()
 
@@ -114,7 +114,7 @@ class StreamTestsBase(object):
         # should receive EOF record
         record = self.conn.read_record()
         assert record.type == stream.record_type
-        assert record.content == ''
+        assert record.content == b''
         assert record.request_id == stream.request_id
 
         assert self.conn.read_record() is None
