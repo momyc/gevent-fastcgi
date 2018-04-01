@@ -31,7 +31,7 @@ import logging
 
 import atexit
 if os.name == "nt":
-    from signal import SIGTERM
+    from signal import SIGINT, SIGTERM
 else:
     from signal import SIGHUP, SIGKILL, SIGQUIT, SIGINT, SIGTERM
 
@@ -339,9 +339,9 @@ class FastCGIServer(StreamServer):
                 self._start_workers()
                 self._supervisor = spawn(self._watch_workers)
                 atexit.register(self._cleanup)
-                sig_register = [SIGTERM]
+                sig_register = [SIGTERM, SIGINT]
                 if os.name != "nt":
-                    sig_register.extend([SIGINT, SIGQUIT])
+                    sig_register.extend([SIGQUIT])
                 for signum in sig_register:
                     signal(signum, sys.exit, 1)
 
