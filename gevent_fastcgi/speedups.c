@@ -67,7 +67,11 @@ py_unpack_pairs(PyObject *self, PyObject *args) {
 			buf += nlen;
 			value = buf;
 			buf += vlen;
+			#if PY_MAJOR_VERSION >= 3
+			tuple = Py_BuildValue("(y#y#)", name, nlen, value, vlen);
+			#else
 			tuple = Py_BuildValue("(s#s#)", name, nlen, value, vlen);
+			#endif
 			if (tuple) {
 				PyList_Append(result, tuple);
 				Py_DECREF(tuple);
