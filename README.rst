@@ -5,7 +5,7 @@ gevent-fastcgi
 No need to monkeypatch and slow down your favourite FastCGI server in order to make it "green".
 
 Provides simple request handler API to allow for custom request handlers.
-Comes with two WSGI request hadler implementations -- one using standard *wsgiref.handlers.BasicCGIHandler* and another using original request hadler.
+Comes with two WSGI request hadler implementations -- one using standard *wsgiref.handlers.BasicCGIHandler* and another using original request handler.
 
 Full support for FastCGI protocol connection multiplexing
 feature.
