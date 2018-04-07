@@ -259,6 +259,10 @@ class ConnectionHandler(six.with_metaclass(ConnectionHandlerType, object)):
             # EOF received
             request.environ = dict(unpack_pairs(request._environ.read()))
             del request._environ
+
+            # Unicode compatibility
+            for key in list(request.environ.keys()):
+                request.environ[key.decode("ISO-8859-1")] = request.environ[key].decode("ISO-8859-1")
             if request.role in (FCGI_RESPONDER, FCGI_AUTHORIZER):
                 self.spawn_request_handler(request)
 
