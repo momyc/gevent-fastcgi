@@ -419,7 +419,7 @@ class FastCGIServer(StreamServer):
 
     def _reap_workers(self, block=False):
         flags = 0 if block else os.WNOHANG
-        while True:
+        while self._workers:
             pid, status = os.waitpid(-1, flags)
             if pid == 0:
                 break
