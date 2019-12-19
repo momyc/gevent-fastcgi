@@ -12,6 +12,7 @@ from gevent_fastcgi.const import (
 )
 
 from gevent_fastcgi.base import Connection, StdoutStream, StderrStream
+from six.moves import xrange
 from ..utils import binary_data, text_data, MockSocket
 
 
@@ -48,7 +49,7 @@ class StreamTestsBase(object):
         stream = self.stream()
         data = [binary_data(1024, 1) for _ in range(13)]
 
-        map(stream.write, data)
+        list(map(stream.write, data))
 
         self.sock.flip()
 
@@ -71,7 +72,7 @@ class StreamTestsBase(object):
             assert record.type == stream.record_type
             assert record.request_id == stream.request_id
             received.append(record.content)
-        assert ''.join(received) == ''.join(data)
+        assert b''.join(received) == b''.join([data])
 
     def test_long_writelines(self):
         stream = self.stream()
@@ -86,7 +87,7 @@ class StreamTestsBase(object):
             assert record.type == stream.record_type
             assert record.request_id == stream.request_id
             received.append(record.content)
-        assert ''.join(received) == ''.join(data)
+        assert b''.join(received) == b''.join(data)
 
     def test_empty_write(self):
         conn = self.conn
@@ -113,7 +114,7 @@ class StreamTestsBase(object):
         # should receive EOF record
         record = self.conn.read_record()
         assert record.type == stream.record_type
-        assert record.content == ''
+        assert record.content == b''
         assert record.request_id == stream.request_id
 
         assert self.conn.read_record() is None
@@ -149,8 +150,8 @@ class StderrStreamTests(StreamTestsBase, unittest.TestCase):
         self.sock.flip()
 
         data_in = ''.join(data)
-        data_out = ''.join(record.content for record in self.conn
+        data_out = b''.join(record.content for record in self.conn
                            if (record.type == stream.record_type
                                and record.request_id == stream.request_id))
 
-        assert data_in == data_out
+        assert data_in == data_out.decode("ISO-8859-1")

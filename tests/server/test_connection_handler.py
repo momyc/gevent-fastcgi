@@ -112,7 +112,7 @@ class ConnectionHandlerTests(unittest.TestCase):
         assert rec and unpack_end_request(rec.content)
 
         for stream in FCGI_STDOUT, FCGI_STDERR:
-            assert '' == read_stream(handler, stream, req_id)
+            assert b'' == read_stream(handler, stream, req_id)
 
     def test_abort_request(self):
         req_id = next_req_id()
@@ -138,7 +138,7 @@ class ConnectionHandlerTests(unittest.TestCase):
         assert rec and unpack_end_request(rec.content)
 
         for stream in FCGI_STDOUT, FCGI_STDERR:
-            assert '' == read_stream(handler, stream, req_id)
+            assert b'' == read_stream(handler, stream, req_id)
 
     def test_request_multiplexing(self):
         req_id = next_req_id()
@@ -169,7 +169,7 @@ class ConnectionHandlerTests(unittest.TestCase):
             assert rec and unpack_end_request(rec.content)
 
             for stream in FCGI_STDOUT, FCGI_STDERR:
-                assert '' == read_stream(handler, stream, r_id)
+                assert b'' == read_stream(handler, stream, r_id)
 
 
 # Helper functions
@@ -248,10 +248,13 @@ def read_stream(handler, rec_type, req_id):
 
         assert closed, 'Stream was not closed'
 
-        return ''.join(content)
+        return b''.join(content)
 
+c = count(1)
+def do_next():
+    return next(c)
 
-next_req_id = count(1).next
+next_req_id = do_next
 
 
 if __name__ == '__main__':

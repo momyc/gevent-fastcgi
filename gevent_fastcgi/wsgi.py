@@ -20,13 +20,14 @@
 
 from __future__ import absolute_import
 
+import six
 import sys
 import logging
 from traceback import format_exception
 import re
 from wsgiref.handlers import BaseCGIHandler
 
-from zope.interface import implements
+from zope.interface import implementer
 
 from .interfaces import IRequestHandler
 from .server import Request, FastCGIServer
@@ -50,10 +51,8 @@ mandatory_environ = (
 )
 
 
+@implementer(IRequestHandler)
 class WSGIRefRequestHandler(object):
-
-    implements(IRequestHandler)
-
     def __init__(self, app):
         self.app = app
 
@@ -109,7 +108,7 @@ class WSGIRequest(object):
         if exc_info is not None:
             try:
                 if self._headers_sent:
-                    raise exc_info[0], exc_info[1], exc_info[2]
+                    six.reraise(exc_info[0], exc_info[1], exc_info[2])
             finally:
                 exc_info = None
 
@@ -152,11 +151,8 @@ class WSGIRequest(object):
         self._stdout.writelines(headers)
         self._headers_sent = True
 
-
+@implementer(IRequestHandler)
 class WSGIRequestHandler(object):
-
-    implements(IRequestHandler)
-
     def __init__(self, app):
         self.app = app
 

@@ -22,6 +22,7 @@ This project could not be where it is now without help of the following great pe
 
         * `David Galeano <https://github.com/davidgaleano>`_
         * `Lucas Clemente Vella <https://github.com/lvella>`_
+        * `Nicholas Kwan <https://github.com/multippt>`_
         * `Peter D. Gray <https://github.com/peter-conalgo>`_
 
 Thank you guys for all your help!

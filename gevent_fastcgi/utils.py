@@ -22,6 +22,8 @@ from __future__ import absolute_import
 
 import struct
 import logging
+import six
+import sys
 
 
 __all__ = [
@@ -49,8 +51,8 @@ for name in 'header', 'begin_request', 'end_request', 'unknown_type':
 
 def pack_pairs(pairs):
     if isinstance(pairs, dict):
-        pairs = pairs.iteritems()
-    return ''.join(pack_pair(name, value) for name, value in pairs)
+        pairs = six.iteritems(pairs)
+    return b''.join(pack_pair(name, value) for name, value in pairs)
 
 
 try:
@@ -64,17 +66,27 @@ except ImportError:
     def pack_len(s):
         l = len(s)
         if l < 128:
-            return chr(l)
+            if sys.version_info < (3, 0):
+                return chr(l)
+            else:
+                return bytes([l])
         elif l > 0x7fffffff:
             raise ValueError('Maximum name or value length is {0}'.format(
                 0x7fffffff))
         return length_struct.pack(l | 0x80000000)
 
     def pack_pair(name, value):
-        return ''.join((pack_len(name), pack_len(value), name, value))
+        if isinstance(name, six.text_type):
+            name = name.encode("ISO-8859-1")
+        if isinstance(value, six.text_type):
+            value = value.encode("ISO-8859-1")
+        return b''.join((pack_len(name), pack_len(value), name, value))
 
     def unpack_len(buf, pos):
-        _len = ord(buf[pos])
+        if sys.version_info < (3, 0):
+            _len = ord(buf[pos])
+        else:
+            _len = buf[pos]
         if _len & 128:
             _len = length_struct.unpack_from(buf, pos)[0] & 0x7fffffff
             pos += 4

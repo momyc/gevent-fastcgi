@@ -1,8 +1,13 @@
 from __future__ import absolute_import
 
 import errno
+import sys
 from random import random, randint, choice
-from string import digits, letters, punctuation
+from string import digits, punctuation
+try:
+    from string import ascii_letters as letters
+except ImportError:
+    from string import letters
 from functools import wraps
 from contextlib import contextmanager
 import logging
@@ -19,6 +24,8 @@ from gevent_fastcgi.const import (
 from gevent_fastcgi.base import Connection, InputStream
 from gevent_fastcgi.utils import pack_pairs
 from gevent_fastcgi.wsgi import WSGIServer
+import six
+from six.moves import xrange
 
 
 __all__ = (
@@ -59,7 +66,10 @@ def some_delay(delay=None):
     sleep(delay)
 
 
-_binary_source = map(chr, range(256))
+if sys.version_info < (3, 0):
+    _binary_source = map(chr, range(256))
+else:
+    _binary_source = list(map(lambda x: bytes([x]), range(256)))
 _text_source = letters + digits + punctuation
 
 
@@ -110,7 +120,7 @@ class WSGIApplication(object):
 
         if self.response is None:
             response = [stdin.read()] or self.data
-        elif isinstance(self.response, basestring):
+        elif isinstance(self.response, six.string_types):
             response = [self.response]
         else:
             response = self.response
@@ -132,7 +142,7 @@ class WSGIApplication(object):
 class TestingConnection(Connection):
 
     def write_record(self, record):
-        if isinstance(record, (int, long, float)):
+        if isinstance(record, six.integer_types + (float,)):
             sleep(record)
         else:
             super(TestingConnection, self).write_record(record)
@@ -140,7 +150,7 @@ class TestingConnection(Connection):
 
 @contextmanager
 def make_connection(address):
-    af = isinstance(address, basestring) and socket.AF_UNIX or socket.AF_INET
+    af = isinstance(address, six.string_types) and getattr(socket, "AF_UNIX", 0) or socket.AF_INET
     sock = socket.socket(af, socket.SOCK_STREAM)
     try:
         sock.connect(address)
@@ -174,9 +184,9 @@ def check_socket(callable):
 
 class MockSocket(object):
 
-    def __init__(self, data=''):
+    def __init__(self, data=b''):
         self.input = data
-        self.output = ''
+        self.output = b''
         self.exception = False
         self.closed = False
 
@@ -259,7 +269,7 @@ class Response(object):
         self.app_status = None
 
     def parse(self):
-        headers, body = self.stdout.read().split('\r\n\r\n', 1)
+        headers, body = self.stdout.read().split(b'\r\n\r\n', 1)
         headers = dict(
-            header.split(': ', 1) for header in headers.split('\r\n'))
+            header.split(b': ', 1) for header in headers.split(b'\r\n'))
         return headers, body

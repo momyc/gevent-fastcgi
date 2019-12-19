@@ -1,6 +1,7 @@
 from __future__ import absolute_import, with_statement
 
 import unittest
+from six.moves import xrange
 
 from gevent import Timeout
 
@@ -13,7 +14,7 @@ class InputStreamTests(unittest.TestCase):
     def setUp(self):
         self.sock = MockSocket()
         self.conn = Connection(self.sock)
-        self.stream = InputStream(self.conn)
+        self.stream = InputStream()
 
     def tearDown(self):
         del self.stream
@@ -36,8 +37,9 @@ class InputStreamTests(unittest.TestCase):
     def test_iter(self):
         stream = self.stream
         data_in = [text_data() + '\r\n' for _ in xrange(17)]
+        data_in = [line.encode("ISO-8859-1") for line in data_in]
 
-        map(stream.feed, data_in)
+        list(map(stream.feed, data_in))
         stream.feed('')
 
         for line_in, line_out in zip(data_in, stream):
@@ -56,8 +58,9 @@ class InputStreamTests(unittest.TestCase):
     def test_readlines(self):
         stream = self.stream
         data_in = [text_data() + '\r\n' for _ in xrange(13)]
-        map(stream.feed, data_in)
+        list(map(stream.feed, data_in))
         stream.feed('')
 
         data_out = stream.readlines()
+        data_out = [line.decode("ISO-8859-1") for line in data_out]
         assert data_out == data_in, data_out
